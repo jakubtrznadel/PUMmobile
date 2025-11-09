@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/material.dart';
@@ -17,6 +18,7 @@ class StatsScreen extends StatefulWidget {
 class _StatsScreenState extends State<StatsScreen> {
   final _authService = AuthService();
   Future<UserStats?>? _statsFuture;
+  bool _isOffline = false;
 
   @override
   void initState() {
@@ -31,6 +33,10 @@ class _StatsScreenState extends State<StatsScreen> {
   }
 
   Future<UserStats?> _getUserStats() async {
+    setState(() {
+      _isOffline = false;
+    });
+
     final connectivityResults = await Connectivity().checkConnectivity();
     bool isOnline = connectivityResults
         .any((r) => r == ConnectivityResult.mobile || r == ConnectivityResult.wifi);
@@ -40,9 +46,12 @@ class _StatsScreenState extends State<StatsScreen> {
 
     if (isOnline) {
       try {
-        statsData = await _authService.getUserStats();
+        statsData = await _authService.getUserStats().timeout(const Duration(seconds: 3));
         await prefs.setString('cached_stats', jsonEncode(statsData));
       } catch (e) {
+        setState(() {
+          _isOffline = true;
+        });
         final cachedJson = prefs.getString('cached_stats');
         if (cachedJson != null) {
           statsData = jsonDecode(cachedJson);
@@ -51,6 +60,9 @@ class _StatsScreenState extends State<StatsScreen> {
         }
       }
     } else {
+      setState(() {
+        _isOffline = true;
+      });
       final cachedJson = prefs.getString('cached_stats');
       if (cachedJson != null) {
         statsData = jsonDecode(cachedJson);
@@ -60,6 +72,75 @@ class _StatsScreenState extends State<StatsScreen> {
     }
 
     return UserStats.fromJson(statsData);
+  }
+
+  Widget _buildStatCard({
+    required IconData icon,
+    required String value,
+    required String label,
+  }) {
+    return Card(
+      color: const Color(0xFF242424),
+      elevation: 4,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Icon(icon, color: const Color(0xFFffc300), size: 36),
+            const SizedBox(height: 12),
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(
+                value,
+                style: GoogleFonts.bebasNeue(
+                  fontSize: 34,
+                  color: Colors.white,
+                  letterSpacing: 1.5,
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ),
+            const SizedBox(height: 4),
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(
+                label,
+                style: TextStyle(
+                  fontSize: 14,
+                  color: Colors.white.withOpacity(0.7),
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildOfflineWarning(Map<String, String> translations) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12.0),
+      color: const Color(0xFFffc300),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.wifi_off, color: const Color(0xFF242424), size: 20),
+          const SizedBox(width: 10),
+          Text(
+            translations['offlineCachedData'] ?? 'Brak połączenia. Widoczne dane z pamięci.',
+            style: TextStyle(
+              color: const Color(0xFF242424),
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -72,60 +153,92 @@ class _StatsScreenState extends State<StatsScreen> {
         return Scaffold(
           appBar: CustomAppBar(),
           backgroundColor: const Color(0xFF1a1a1a),
-          body: FutureBuilder<UserStats?>(
-            future: _statsFuture,
-            builder: (context, snapshot) {
-              if (snapshot.connectionState == ConnectionState.waiting) {
-                return const Center(
-                  child: CircularProgressIndicator(
-                    valueColor: AlwaysStoppedAnimation<Color>(Color(0xFFffc300)),
-                  ),
-                );
-              }
+          body: Column(
+            children: [
+              if (_isOffline) _buildOfflineWarning(translations),
+              Expanded(
+                child: RefreshIndicator(
+                  onRefresh: _fetchStats,
+                  color: const Color(0xFF242424),
+                  backgroundColor: const Color(0xFFffc300),
+                  child: FutureBuilder<UserStats?>(
+                    future: _statsFuture,
+                    builder: (context, snapshot) {
+                      if (snapshot.connectionState == ConnectionState.waiting) {
+                        return const Center(
+                          child: CircularProgressIndicator(
+                            valueColor: AlwaysStoppedAnimation<Color>(Color(0xFFffc300)),
+                          ),
+                        );
+                      }
 
-              if (snapshot.hasError || !snapshot.hasData || snapshot.data == null) {
-                return Center(
-                  child: Text(
-                    translations['noStats'] ?? 'Brak statystyk',
-                    style: GoogleFonts.bebasNeue(
-                      fontSize: 24,
-                      color: const Color(0xFFffc300),
-                    ),
-                  ),
-                );
-              }
+                      if (snapshot.hasError || !snapshot.hasData || snapshot.data == null) {
+                        return ListView(
+                          physics: const AlwaysScrollableScrollPhysics(),
+                          children: [
+                            SizedBox(height: MediaQuery.of(context).size.height * 0.3),
+                            Center(
+                              child: Text(
+                                translations['noStats'] ?? 'Brak statystyk',
+                                style: GoogleFonts.bebasNeue(
+                                  fontSize: 24,
+                                  color: const Color(0xFFffc300),
+                                ),
+                              ),
+                            ),
+                          ],
+                        );
+                      }
 
-              final stats = snapshot.data!;
-              return Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      translations['stats'] ?? 'Statystyki',
-                      style: GoogleFonts.bebasNeue(
-                          fontSize: 36, color: const Color(0xFFffc300)),
-                    ),
-                    const SizedBox(height: 20),
-                    Text(
-                      '${translations['totalWorkouts'] ?? 'Liczba treningów'}: ${stats.totalWorkouts}',
-                      style: GoogleFonts.bebasNeue(
-                          fontSize: 20, color: const Color(0xFFffc300)),
-                    ),
-                    Text(
-                      '${translations['totalDistance'] ?? 'Całkowity dystans'}: ${stats.totalDistance.toStringAsFixed(2)} ${translations['km']}',
-                      style: GoogleFonts.bebasNeue(
-                          fontSize: 20, color: const Color(0xFFffc300)),
-                    ),
-                    Text(
-                      '${translations['averageSpeed'] ?? 'Średnia prędkość'}: ${stats.averageSpeed.toStringAsFixed(2)} ${translations['km/h']}',
-                      style: GoogleFonts.bebasNeue(
-                          fontSize: 20, color: const Color(0xFFffc300)),
-                    ),
-                  ],
+                      final stats = snapshot.data!;
+                      return SingleChildScrollView(
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        padding: const EdgeInsets.all(16.0),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              translations['yourStats'] ?? 'Twoje Statystyki',
+                              style: GoogleFonts.bebasNeue(
+                                fontSize: 42,
+                                color: const Color(0xFFffc300),
+                                letterSpacing: 1.5,
+                              ),
+                            ),
+                            const SizedBox(height: 20),
+                            GridView.count(
+                              crossAxisCount: 2,
+                              shrinkWrap: true,
+                              physics: const NeverScrollableScrollPhysics(),
+                              mainAxisSpacing: 12,
+                              crossAxisSpacing: 12,
+                              childAspectRatio: 1,
+                              children: [
+                                _buildStatCard(
+                                  icon: Icons.track_changes,
+                                  value: stats.totalWorkouts.toString(),
+                                  label: translations['totalWorkouts'] ?? 'Liczba treningów',
+                                ),
+                                _buildStatCard(
+                                  icon: Icons.map,
+                                  value: '${stats.totalDistance.toStringAsFixed(2)} ${translations["km"] ?? "km"}',
+                                  label: translations['totalDistance'] ?? 'Całkowity dystans',
+                                ),
+                                _buildStatCard(
+                                  icon: Icons.speed,
+                                  value: '${stats.averageSpeed.toStringAsFixed(2)} ${translations["km/h"] ?? "km/h"}',
+                                  label: translations['averageSpeed'] ?? 'Średnia prędkość',
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
                 ),
-              );
-            },
+              ),
+            ],
           ),
         );
       },

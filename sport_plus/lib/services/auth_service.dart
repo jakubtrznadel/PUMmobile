@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:http/io_client.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -8,14 +9,21 @@ import '../language_state.dart';
 class AuthService {
   static const String baseUrl = 'https://192.168.0.161:7114';
 
-  IOClient _createClient() {
-    final httpClient = HttpClient()..badCertificateCallback = (X509Certificate cert, String host, int port) => true;
-    httpClient.connectionTimeout = Duration(seconds: 2);
-    return IOClient(httpClient);
+  IOClient? _client;
+
+  IOClient _getClient() {
+    if (_client == null) {
+      final httpClient = HttpClient()
+        ..badCertificateCallback =
+            (X509Certificate cert, String host, int port) => true;
+      httpClient.connectionTimeout = Duration(seconds: 10);
+      _client = IOClient(httpClient);
+    }
+    return _client!;
   }
 
   Future<Map<String, dynamic>> login(String email, String password) async {
-    final client = _createClient();
+    final client = _getClient();
     try {
       final response = await client.post(
         Uri.parse('$baseUrl/api/auth/login'),
@@ -32,21 +40,24 @@ class AuthService {
         final data = jsonDecode(response.body);
         return {
           'success': false,
-          'message': data['message'] ?? (globalIsPolish.value ? 'Błąd logowania: ${response.statusCode}' : 'Login failed: ${response.statusCode}')
+          'message': data['message'] ??
+              (globalIsPolish.value
+                  ? 'Błąd logowania: ${response.statusCode}'
+                  : 'Login failed: ${response.statusCode}')
         };
       }
     } catch (e) {
       return {
         'success': false,
-        'message': globalIsPolish.value ? 'Błąd połączenia z serwerem: $e' : 'Failed to connect to the server: $e'
+        'message': globalIsPolish.value
+            ? 'Błąd połączenia z serwerem: $e'
+            : 'Failed to connect to the server: $e'
       };
-    } finally {
-      client.close();
     }
   }
 
   Future<Map<String, dynamic>> register(String email, String password) async {
-    final client = _createClient();
+    final client = _getClient();
     try {
       final response = await client.post(
         Uri.parse('$baseUrl/api/auth/register'),
@@ -61,16 +72,19 @@ class AuthService {
         final data = jsonDecode(response.body);
         return {
           'success': false,
-          'message': data['message'] ?? (globalIsPolish.value ? 'Błąd rejestracji: ${response.statusCode}' : 'Registration failed: ${response.statusCode}')
+          'message': data['message'] ??
+              (globalIsPolish.value
+                  ? 'Błąd rejestracji: ${response.statusCode}'
+                  : 'Registration failed: ${response.statusCode}')
         };
       }
     } catch (e) {
       return {
         'success': false,
-        'message': globalIsPolish.value ? 'Błąd połączenia z serwerem: $e' : 'Failed to connect to the server: $e'
+        'message': globalIsPolish.value
+            ? 'Błąd połączenia z serwerem: $e'
+            : 'Failed to connect to the server: $e'
       };
-    } finally {
-      client.close();
     }
   }
 
@@ -82,64 +96,66 @@ class AuthService {
   Future<void> logoutAndClearData() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.clear();
+    _client?.close();
+    _client = null;
   }
 
   Future<List<dynamic>> getUserActivities() async {
     final token = await getToken();
-    final client = _createClient();
+    final client = _getClient();
     try {
       final response = await client.get(
         Uri.parse('$baseUrl/api/activities'),
         headers: {
           'Authorization': 'Bearer $token',
-          'Content-Type': 'application/json',
         },
       );
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         if (data is List) {
-          data.sort((a, b) => DateTime.parse(b['createdAt']).compareTo(DateTime.parse(a['createdAt'])));
+          data.sort((a, b) =>
+              DateTime.parse(b['createdAt']).compareTo(DateTime.parse(a['createdAt'])));
           return data;
         }
         return [];
       } else {
-        throw Exception(globalIsPolish.value ? 'Błąd pobierania aktywności' : 'Failed to load activities');
+        throw Exception(globalIsPolish.value
+            ? 'Błąd pobierania aktywności'
+            : 'Failed to load activities');
       }
     } catch (e) {
-      throw Exception(globalIsPolish.value ? 'Błąd połączenia przy pobieraniu aktywności' : 'Connection error when loading activities');
-    } finally {
-      client.close();
+      throw Exception(globalIsPolish.value
+          ? 'Błąd połączenia przy pobieraniu aktywności'
+          : 'Connection error when loading activities');
     }
   }
 
   Future<dynamic> getActivity(int id) async {
     final token = await getToken();
-    final client = _createClient();
+    final client = _getClient();
     try {
       final response = await client.get(
         Uri.parse('$baseUrl/api/activities/$id'),
         headers: {
           'Authorization': 'Bearer $token',
-          'Content-Type': 'application/json',
         },
       );
 
       if (response.statusCode == 200) {
         return jsonDecode(response.body);
       } else {
-        throw Exception(globalIsPolish.value ? 'Nie znaleziono aktywności' : 'Activity not found');
+        throw Exception(
+            globalIsPolish.value ? 'Nie znaleziono aktywności' : 'Activity not found');
       }
     } catch (e) {
       throw Exception(globalIsPolish.value ? 'Błąd połączenia' : 'Connection error');
-    } finally {
-      client.close();
     }
   }
 
   Future<int?> createActivity(Map<String, dynamic> activity) async {
     final token = await getToken();
-    final client = _createClient();
+    final client = _getClient();
     try {
       final response = await client.post(
         Uri.parse('$baseUrl/api/activities'),
@@ -167,18 +183,18 @@ class AuthService {
           throw Exception('Błąd przetwarzania odpowiedzi serwera: $e');
         }
       } else {
-        throw Exception('Błąd serwera (status ${response.statusCode}): ${response.body}');
+        throw Exception(
+            'Błąd serwera (status ${response.statusCode}): ${response.body}');
       }
     } catch (e) {
-      throw Exception('Nie udało się utworzyć aktywności. Sprawdź konsolę debugowania po szczegóły.');
-    } finally {
-      client.close();
+      throw Exception(
+          'Nie udało się utworzyć aktywności. Sprawdź konsolę debugowania po szczegóły.');
     }
   }
 
   Future<void> updateActivity(int id, dynamic activity) async {
     final token = await getToken();
-    final client = _createClient();
+    final client = _getClient();
     try {
       final response = await client.put(
         Uri.parse('$baseUrl/api/activities/$id'),
@@ -190,17 +206,19 @@ class AuthService {
       );
 
       if (response.statusCode != 200) {
-        throw Exception(globalIsPolish.value ? 'Błąd aktualizacji aktywności' : 'Failed to update activity');
+        throw Exception(globalIsPolish.value
+            ? 'Błąd aktualizacji aktywności'
+            : 'Failed to update activity');
       }
     } catch (e) {
       throw Exception(globalIsPolish.value ? 'Błąd połączenia' : 'Connection error');
-    } finally {
-      client.close();
     }
   }
 
   Future<void> uploadActivityPhoto(int activityId, File file) async {
     final token = await getToken();
+    final client = _getClient();
+
     var request = http.MultipartRequest(
       'POST',
       Uri.parse('$baseUrl/api/activities/$activityId/photo'),
@@ -209,58 +227,85 @@ class AuthService {
     request.files.add(await http.MultipartFile.fromPath('file', file.path));
 
     try {
-      final streamedResponse = await request.send().timeout(Duration(seconds: 2));
+      final streamedResponse =
+      await client.send(request).timeout(Duration(seconds: 10));
+
       if (streamedResponse.statusCode != 200) {
-        throw Exception(globalIsPolish.value ? 'Błąd wgrywania zdjęcia: ${streamedResponse.statusCode}' : 'Failed to upload photo: ${streamedResponse.statusCode}');
+        final responseBody = await streamedResponse.stream.bytesToString();
+        throw Exception(globalIsPolish.value
+            ? 'Błąd wgrywania zdjęcia: ${streamedResponse.statusCode}, $responseBody'
+            : 'Failed to upload photo: ${streamedResponse.statusCode}, $responseBody');
       }
     } catch (e) {
-      throw Exception(globalIsPolish.value ? 'Błąd połączenia przy wgrywaniu zdjęcia' : 'Connection error when uploading photo');
+      throw Exception(globalIsPolish.value
+          ? 'Błąd połączenia przy wgrywaniu zdjęcia'
+          : 'Connection error when uploading photo');
     }
   }
 
   Future<void> deleteActivity(int id) async {
     final token = await getToken();
-    final client = _createClient();
+    final client = _getClient();
     try {
       final response = await client.delete(
         Uri.parse('$baseUrl/api/activities/$id'),
         headers: {
           'Authorization': 'Bearer $token',
-          'Content-Type': 'application/json',
         },
       );
 
       if (response.statusCode != 200) {
-        throw Exception(globalIsPolish.value ? 'Błąd usuwania aktywności' : 'Failed to delete activity');
+        throw Exception(globalIsPolish.value
+            ? 'Błąd usuwania aktywności'
+            : 'Failed to delete activity');
       }
     } catch (e) {
       throw Exception(globalIsPolish.value ? 'Błąd połączenia' : 'Connection error');
-    } finally {
-      client.close();
     }
   }
 
   Future<dynamic> getUserStats() async {
     final token = await getToken();
-    final client = _createClient();
+    final client = _getClient();
     try {
       final response = await client.get(
         Uri.parse('$baseUrl/api/activities/stats'),
         headers: {
           'Authorization': 'Bearer $token',
-          'Content-Type': 'application/json',
         },
       );
 
       if (response.statusCode == 200) {
         return jsonDecode(response.body);
       } else {
-        throw Exception(globalIsPolish.value ? 'Błąd pobierania statystyk' : 'Failed to load stats');
+        throw Exception(
+            globalIsPolish.value ? 'Błąd pobierania statystyk' : 'Failed to load stats');
       }
     } catch (e) {
       throw Exception(globalIsPolish.value ? 'Błąd połączenia' : 'Connection error');
-    } finally {
-      client.close();
+    }
+  }
+
+  Future<Uint8List> exportActivityToGpx(int activityId) async {
+    final token = await getToken();
+    final client = _getClient();
+    try {
+      final response = await client.get(
+        Uri.parse('$baseUrl/api/activities/$activityId/export/gpx'),
+        headers: {
+          'Authorization': 'Bearer $token',
+        },
+      );
+
+      if (response.statusCode == 200) {
+        return response.bodyBytes;
+      } else {
+        throw Exception(globalIsPolish.value
+            ? 'Nie udało się wyeksportować aktywności do GPX'
+            : 'Failed to export activity to GPX');
+      }
+    } catch (e) {
+      throw Exception(globalIsPolish.value ? 'Błąd połączenia' : 'Connection error');
     }
   }
 }

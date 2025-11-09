@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -6,7 +7,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:http/io_client.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
-import 'animations/splash_animation.dart';
 import 'profile_screen.dart';
 import 'custom_app_bar.dart';
 import 'translations.dart';
@@ -105,6 +105,41 @@ class _MainScreenState extends State<MainScreen> {
     _fetchProfileAndSyncActivities();
   }
 
+  Future<void> _syncLocalActivities(SharedPreferences prefs) async {
+    var localActivitiesJSON = prefs.getStringList('local_activities') ?? [];
+    if (localActivitiesJSON.isEmpty) return;
+
+    List<String> successfullySynced = [];
+    List<String> remainingActivities = List.from(localActivitiesJSON);
+
+    for (var entryJSON in localActivitiesJSON) {
+      try {
+        final entry = jsonDecode(entryJSON);
+        final activityData = entry['activity'];
+        final photoPath = entry['photoPath'];
+
+        final newActivityId =
+        await _authService.createActivity(activityData);
+
+        if (photoPath != null && newActivityId != null) {
+          final photoFile = File(photoPath);
+          if (await photoFile.exists()) {
+            await _authService.uploadActivityPhoto(
+                newActivityId, photoFile);
+          }
+        }
+        successfullySynced.add(entryJSON);
+      } catch (e) {
+      }
+    }
+
+    if (successfullySynced.isNotEmpty) {
+      remainingActivities
+          .removeWhere((item) => successfullySynced.contains(item));
+      await prefs.setStringList('local_activities', remainingActivities);
+    }
+  }
+
   Future<void> _fetchProfileAndSyncActivities() async {
     if (!mounted) return;
     setState(() {
@@ -130,65 +165,45 @@ class _MainScreenState extends State<MainScreen> {
           return;
         }
 
-        final client = IOClient(HttpClient()
+        final httpClient = HttpClient()
           ..badCertificateCallback =
-              (X509Certificate cert, String host, int port) => true);
-        final response = await client.get(
-          Uri.parse('${AuthService.baseUrl}/api/profile'),
-          headers: {'Authorization': 'Bearer $token'},
-        );
+              (X509Certificate cert, String host, int port) => true;
 
-        if (response.statusCode == 200 && mounted) {
-          final data = jsonDecode(response.body);
-          setState(() {
-            _firstName = data['firstName'];
-            _lastName = data['lastName'];
-            _avatarUrl = data['avatarUrl'];
-          });
-          await prefs.setString('firstName', _firstName ?? '');
-          await prefs.setString('lastName', _lastName ?? '');
-          await prefs.setString('avatarUrl', _avatarUrl ?? '');
+        httpClient.connectionTimeout = const Duration(seconds: 3);
+        final client = IOClient(httpClient);
+
+        try {
+          final response = await client.get(
+            Uri.parse('${AuthService.baseUrl}/api/profile'),
+            headers: {'Authorization': 'Bearer $token'},
+          );
+
+          if (response.statusCode == 200 && mounted) {
+            final data = jsonDecode(response.body);
+            setState(() {
+              _firstName = data['firstName'];
+              _lastName = data['lastName'];
+              _avatarUrl = data['avatarUrl'];
+            });
+            await prefs.setString('firstName', _firstName ?? '');
+            await prefs.setString('lastName', _lastName ?? '');
+            await prefs.setString('avatarUrl', _avatarUrl ?? '');
+          }
+        } finally {
+          client.close();
         }
 
-        var localActivitiesJSON = prefs.getStringList('local_activities') ?? [];
-
-        if (localActivitiesJSON.isNotEmpty) {
-          List<String> successfullySynced = [];
-          List<String> remainingActivities = List.from(localActivitiesJSON);
-
-          for (var entryJSON in localActivitiesJSON) {
-            try {
-              final entry = jsonDecode(entryJSON);
-              final activityData = entry['activity'];
-              final photoPath = entry['photoPath'];
-
-              final newActivityId =
-              await _authService.createActivity(activityData);
-
-              if (photoPath != null && newActivityId != null) {
-                final photoFile = File(photoPath);
-                if (await photoFile.exists()) {
-                  await _authService.uploadActivityPhoto(
-                      newActivityId, photoFile);
-                }
-              }
-              successfullySynced.add(entryJSON);
-            } catch (e) {
-
-            }
-          }
-
-          if (successfullySynced.isNotEmpty) {
-            remainingActivities
-                .removeWhere((item) => successfullySynced.contains(item));
-            await prefs.setStringList('local_activities', remainingActivities);
-          }
+        try {
+          await _syncLocalActivities(prefs).timeout(const Duration(seconds: 3));
+        } catch (syncError) {
+          print("Synchronizacja przekroczyła limit czasu lub nie powiodła się.");
         }
+
       } catch (e) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(SnackBar(
               content: Text(
-                  globalIsPolish.value ? 'Błąd połączenia' : 'Connection error')));
+                  globalIsPolish.value ? 'Tryb offline' : 'Offline mode')));
         }
       }
     }
@@ -288,14 +303,19 @@ class _MainScreenState extends State<MainScreen> {
                           translations['startActivity'] ?? 'Start Activity')),
                   const SizedBox(height: 10),
                   ElevatedButton(
-                      style: _customButtonStyle(),
-                      onPressed: () => Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                              builder: (context) =>
-                                  ActivitiesListScreen())),
-                      child: Text(
-                          translations['activities'] ?? 'Activities')),
+                    style: _customButtonStyle(),
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                            builder: (context) => ActivitiesListScreen()),
+                      ).then((_) {
+                        _fetchProfileAndSyncActivities();
+                      });
+                    },
+                    child: Text(
+                        translations['activities'] ?? 'Activities'),
+                  ),
                   const SizedBox(height: 10),
                   ElevatedButton(
                       style: _customButtonStyle(),
@@ -306,13 +326,19 @@ class _MainScreenState extends State<MainScreen> {
                       child: Text(translations['stats'] ?? 'Statistics')),
                   const SizedBox(height: 10),
                   ElevatedButton(
-                      style: _customButtonStyle(),
-                      onPressed: () => Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                              builder: (context) => ProfileScreen())),
-                      child: Text(
-                          translations['goToProfile'] ?? 'Go to Profile')),
+                    style: _customButtonStyle(),
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                            builder: (context) => ProfileScreen()),
+                      ).then((_) {
+                        _fetchProfileAndSyncActivities();
+                      });
+                    },
+                    child: Text(
+                        translations['goToProfile'] ?? 'Go to Profile'),
+                  ),
                 ] else ...[
                   Text(translations['setUpData'] ?? 'Set up your data',
                       style: GoogleFonts.bebasNeue(
@@ -320,13 +346,19 @@ class _MainScreenState extends State<MainScreen> {
                       textAlign: TextAlign.center),
                   const SizedBox(height: 20),
                   ElevatedButton(
-                      style: _customButtonStyle(),
-                      onPressed: () => Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                              builder: (context) => ProfileScreen())),
-                      child: Text(
-                          translations['goToProfile'] ?? 'Go to Profile')),
+                    style: _customButtonStyle(),
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                            builder: (context) => ProfileScreen()),
+                      ).then((_) {
+                        _fetchProfileAndSyncActivities();
+                      });
+                    },
+                    child: Text(
+                        translations['goToProfile'] ?? 'Go to Profile'),
+                  ),
                 ],
               ],
             ),

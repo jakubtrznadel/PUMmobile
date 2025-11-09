@@ -44,6 +44,9 @@ class _ActivityTrackingScreenState extends State<ActivityTrackingScreen> {
   Timer? _timer;
   bool _isSaving = false;
 
+  double _averageSpeed = 0.0;
+  double _pace = 0.0;
+
   @override
   void initState() {
     super.initState();
@@ -111,7 +114,7 @@ class _ActivityTrackingScreenState extends State<ActivityTrackingScreen> {
     _positionStream = Geolocator.getPositionStream(
       locationSettings: const LocationSettings(
         accuracy: LocationAccuracy.high,
-        distanceFilter: 5,
+        distanceFilter: 0,
       ),
     ).listen((Position position) {
       if (mounted) {
@@ -139,15 +142,38 @@ class _ActivityTrackingScreenState extends State<ActivityTrackingScreen> {
   void _startTracking() async {
     bool hasPermission = await _checkLocationServicesAndPermissions();
     if (!hasPermission) return;
+
     setState(() {
       _isTracking = true;
       _startTime = DateTime.now();
       _positions = [];
       _distance = 0.0;
+      _averageSpeed = 0.0;
+      _pace = 0.0;
     });
+
     _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (mounted) {
-        setState(() {});
+        if (_isTracking && _startTime != null) {
+          final durationInSeconds =
+              DateTime.now().difference(_startTime!).inSeconds;
+          final durationInHours = durationInSeconds / 3600.0;
+          final distanceInKm = _distance / 1000.0;
+
+          double newPace = 0.0;
+          double newAvgSpeed = 0.0;
+
+          if (distanceInKm > 0 && durationInSeconds > 0) {
+            newAvgSpeed = distanceInKm / durationInHours;
+            final durationInMinutes = durationInSeconds / 60.0;
+            newPace = durationInMinutes / distanceInKm;
+          }
+
+          setState(() {
+            _averageSpeed = newAvgSpeed;
+            _pace = newPace;
+          });
+        }
       } else {
         timer.cancel();
       }
@@ -393,15 +419,24 @@ class _ActivityTrackingScreenState extends State<ActivityTrackingScreen> {
     }
   }
 
+  String _formatPace(double paceInMinPerKm) {
+    if (paceInMinPerKm.isInfinite || paceInMinPerKm <= 0) {
+      return '--:--';
+    }
+    final int minutes = paceInMinPerKm.floor();
+    final int seconds = ((paceInMinPerKm - minutes) * 60).round();
+    return '$minutes:${seconds.toString().padLeft(2, '0')}';
+  }
+
   Widget _buildLiveStat(String label, String value, IconData icon) {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Icon(icon, color: const Color(0xFFffc300), size: 28),
-        const SizedBox(height: 8),
+        Icon(icon, color: const Color(0xFFffc300), size: 22),
+        const SizedBox(height: 6),
         Text(value,
             style: GoogleFonts.bebasNeue(
-                fontSize: 32, color: Colors.white, letterSpacing: 1.5)),
+                fontSize: 20, color: Colors.white, letterSpacing: 1.5)),
         Text(label,
             style: const TextStyle(color: Colors.white70, fontSize: 14)),
       ],
@@ -473,12 +508,17 @@ class _ActivityTrackingScreenState extends State<ActivityTrackingScreen> {
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceAround,
+                      GridView.count(
+                        crossAxisCount: 2,
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        mainAxisSpacing: 16,
+                        crossAxisSpacing: 16,
+                        childAspectRatio: 2.0,
                         children: [
                           _buildLiveStat(
                             translations['distance'] ?? 'Dystans',
-                            '${(_distance / 1000).toStringAsFixed(2)} ${translations['km']}',
+                            '${(_distance / 1000).toStringAsFixed(2)} ${translations['km'] ?? 'km'}',
                             Icons.directions_run,
                           ),
                           _buildLiveStat(
@@ -487,6 +527,16 @@ class _ActivityTrackingScreenState extends State<ActivityTrackingScreen> {
                                 ? DateTime.now().difference(_startTime!).inSeconds
                                 : 0),
                             Icons.timer_outlined,
+                          ),
+                          _buildLiveStat(
+                            translations['avgSpeed'] ?? 'Prędkość',
+                            '${_averageSpeed.toStringAsFixed(1)} ${translations['km/h'] ?? 'km/h'}',
+                            Icons.speed,
+                          ),
+                          _buildLiveStat(
+                            translations['pace'] ?? 'Tempo',
+                            '${_formatPace(_pace)} ${translations['min/km'] ?? 'min/km'}',
+                            Icons.timelapse,
                           ),
                         ],
                       ),

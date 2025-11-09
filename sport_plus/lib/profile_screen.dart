@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -9,6 +10,7 @@ import 'package:numberpicker/numberpicker.dart';
 import 'package:image_cropper/image_cropper.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'custom_app_bar.dart';
 import 'translations.dart';
 import 'language_state.dart';
@@ -22,6 +24,7 @@ class ProfileScreen extends StatefulWidget {
 
 class _ProfileScreenState extends State<ProfileScreen> {
   final _authService = AuthService();
+  late IOClient _client;
   String? _firstName;
   String? _lastName;
   String? _birthDate;
@@ -31,13 +34,26 @@ class _ProfileScreenState extends State<ProfileScreen> {
   String? _avatarUrl;
   bool _isLoading = false;
   bool _isInitialLoading = true;
+  bool _isOffline = false;
   File? _image;
 
   @override
   void initState() {
     super.initState();
+    final httpClient = HttpClient()
+      ..badCertificateCallback =
+          (X509Certificate cert, String host, int port) => true;
+    httpClient.connectionTimeout = Duration(seconds: 10);
+    _client = IOClient(httpClient);
+
     _loadCachedProfile();
     _fetchProfile();
+  }
+
+  @override
+  void dispose() {
+    _client.close();
+    super.dispose();
   }
 
   Future<void> _loadCachedProfile() async {
@@ -52,7 +68,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
       _avatarUrl = prefs.getString('avatarUrl');
       _isInitialLoading = false;
     });
-    print('Loaded from cache: firstName=$_firstName, gender=$_gender, avatarUrl=$_avatarUrl');
   }
 
   Future<void> _saveCachedProfile(Map<String, dynamic> data) async {
@@ -69,22 +84,32 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Future<void> _fetchProfile() async {
     setState(() {
       _isLoading = true;
+      _isOffline = false;
     });
-    final startTime = DateTime.now();
+
+    final connectivityResults = await Connectivity().checkConnectivity();
+    bool isOnline = connectivityResults.any((r) => r == ConnectivityResult.mobile || r == ConnectivityResult.wifi);
+
+    if (!isOnline) {
+      setState(() {
+        _isOffline = true;
+        _isLoading = false;
+        _isInitialLoading = false;
+      });
+      return;
+    }
 
     final token = await _authService.getToken();
-    final client = IOClient(HttpClient()..badCertificateCallback = (X509Certificate cert, String host, int port) => true);
     try {
-      final response = await client.get(
+      final response = await _client.get(
         Uri.parse('${AuthService.baseUrl}/api/profile'),
         headers: {
           'Authorization': 'Bearer $token',
         },
-      );
+      ).timeout(const Duration(seconds: 3));
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
-        print('Profile fetched: gender=${data['gender']}, avatarUrl=${data['avatarUrl']}');
         setState(() {
           _firstName = data['firstName'] ?? '';
           _lastName = data['lastName'] ?? '';
@@ -96,22 +121,22 @@ class _ProfileScreenState extends State<ProfileScreen> {
         });
         await _saveCachedProfile(data);
       } else {
-        print('Fetch profile failed: status=${response.statusCode}');
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(globalIsPolish.value ? 'Błąd pobierania profilu' : 'Failed to load profile')),
-        );
+        _showError(
+            globalIsPolish.value ? 'Błąd pobierania profilu' : 'Failed to load profile');
+        setState(() {
+          _isOffline = true;
+        });
       }
     } catch (e) {
-      print('Fetch profile error: $e');
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(globalIsPolish.value ? 'Błąd połączenia' : 'Connection error')),
-      );
+      _showError(globalIsPolish.value ? 'Błąd połączenia' : 'Connection error');
+      setState(() {
+        _isOffline = true;
+      });
     } finally {
       setState(() {
         _isLoading = false;
+        _isInitialLoading = false;
       });
-      client.close();
-      print('Fetch profile time: ${DateTime.now().difference(startTime).inMilliseconds} ms');
     }
   }
 
@@ -121,10 +146,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
     });
 
     final token = await _authService.getToken();
-    final client = IOClient(HttpClient()..badCertificateCallback = (X509Certificate cert, String host, int port) => true);
     try {
-      print('Updating profile with body: $body');
-      final response = await client.put(
+      final response = await _client.put(
         Uri.parse('${AuthService.baseUrl}/api/profile'),
         headers: {
           'Content-Type': 'application/json',
@@ -134,30 +157,23 @@ class _ProfileScreenState extends State<ProfileScreen> {
       );
 
       if (response.statusCode == 200) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(globalIsPolish.value ? 'Zaktualizowano!' : 'Updated!')),
-        );
+        _showSuccess(globalIsPolish.value ? 'Zaktualizowano!' : 'Updated!');
         await _fetchProfile();
       } else {
-        print('Update profile failed: status=${response.statusCode}');
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(globalIsPolish.value ? 'Błąd aktualizacji' : 'Update failed')),
-        );
+        _showError(globalIsPolish.value ? 'Błąd aktualizacji' : 'Update failed');
       }
     } catch (e) {
-      print('Update profile error: $e');
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(globalIsPolish.value ? 'Błąd połączenia' : 'Connection error')),
-      );
+      _showError(globalIsPolish.value ? 'Błąd połączenia' : 'Connection error');
     } finally {
       setState(() {
         _isLoading = false;
       });
-      client.close();
     }
   }
 
   Future<void> _pickAndUploadAvatar() async {
+    if (_isOffline) return;
+
     final picker = ImagePicker();
     try {
       final pickedFile = await picker.pickImage(source: ImageSource.gallery);
@@ -168,7 +184,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
         aspectRatio: const CropAspectRatio(ratioX: 1, ratioY: 1),
         uiSettings: [
           AndroidUiSettings(
-            toolbarTitle: globalIsPolish.value ? 'Dopasuj zdjęcie' : 'Adjust Photo',
+            toolbarTitle:
+            globalIsPolish.value ? 'Dopasuj zdjęcie' : 'Adjust Photo',
             toolbarColor: const Color(0xFF1a1a1a),
             toolbarWidgetColor: const Color(0xFFffc300),
             backgroundColor: const Color(0xFF1a1a1a),
@@ -194,12 +211,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
       });
 
       final token = await _authService.getToken();
-      final client = IOClient(HttpClient()..badCertificateCallback = (X509Certificate cert, String host, int port) => true);
       try {
-        var request = http.MultipartRequest('POST', Uri.parse('${AuthService.baseUrl}/api/profile/avatar'));
+        var request = http.MultipartRequest(
+            'POST', Uri.parse('${AuthService.baseUrl}/api/profile/avatar'));
         request.headers['Authorization'] = 'Bearer $token';
-        request.files.add(await http.MultipartFile.fromPath('file', _image!.path));
-        final streamedResponse = await client.send(request);
+        request.files
+            .add(await http.MultipartFile.fromPath('file', _image!.path));
+
+        final streamedResponse = await _client.send(request);
         final response = await http.Response.fromStream(streamedResponse);
 
         if (response.statusCode == 200) {
@@ -210,33 +229,29 @@ class _ProfileScreenState extends State<ProfileScreen> {
           });
           final prefs = await SharedPreferences.getInstance();
           await prefs.setString('avatarUrl', data['avatarUrl'] ?? '');
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(globalIsPolish.value ? 'Avatar zaktualizowany!' : 'Avatar updated!')),
-          );
+          _showSuccess(
+              globalIsPolish.value ? 'Avatar zaktualizowany!' : 'Avatar updated!');
         } else {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(globalIsPolish.value ? 'Błąd wgrywania avatara' : 'Avatar upload failed')),
-          );
+          _showError(globalIsPolish.value
+              ? 'Błąd wgrywania avatara'
+              : 'Avatar upload failed');
         }
       } catch (e) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(globalIsPolish.value ? 'Błąd połączenia' : 'Connection error')),
-        );
+        _showError(globalIsPolish.value ? 'Błąd połączenia' : 'Connection error');
       } finally {
         setState(() {
           _isLoading = false;
         });
-        client.close();
       }
     } catch (e) {
       if (e.toString().contains('already_active')) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(globalIsPolish.value ? 'Galeria już otwarta, spróbuj ponownie' : 'Gallery already open, try again')),
-        );
+        _showError(globalIsPolish.value
+            ? 'Galeria już otwarta, spróbuj ponownie'
+            : 'Gallery already open, try again');
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(globalIsPolish.value ? 'Błąd podczas wybierania zdjęcia' : 'Error picking image')),
-        );
+        _showError(globalIsPolish.value
+            ? 'Błąd podczas wybierania zdjęcia'
+            : 'Error picking image');
       }
     }
   }
@@ -245,28 +260,63 @@ class _ProfileScreenState extends State<ProfileScreen> {
     await _authService.logoutAndClearData();
     final prefs = await SharedPreferences.getInstance();
     await prefs.clear();
-    Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => LoginScreen()));
+    Navigator.pushAndRemoveUntil(
+      context,
+      MaterialPageRoute(builder: (context) => LoginScreen()),
+          (Route<dynamic> route) => false,
+    );
   }
 
-  Future<void> _showEditDialog(String label, String? currentValue, String field, {bool isNumber = false, bool isDate = false, bool isGender = false}) async {
+  void _showError(String message) {
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(message), backgroundColor: Colors.red),
+      );
+    }
+  }
+
+  void _showSuccess(String message) {
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(message), backgroundColor: Colors.green),
+      );
+    }
+  }
+
+  InputDecoration _dialogInputDecoration(String label) {
+    return InputDecoration(
+      labelText: label,
+      labelStyle: const TextStyle(color: Color(0xFFffc300)),
+      enabledBorder: const OutlineInputBorder(
+          borderSide: BorderSide(color: Color(0xFFffc300))),
+      focusedBorder: const OutlineInputBorder(
+          borderSide: BorderSide(color: Color(0xFFffda66), width: 2)),
+    );
+  }
+
+  Future<void> _showEditDialog(String label, String? currentValue, String field,
+      {bool isNumber = false,
+        bool isDate = false,
+        bool isGender = false}) async {
     final controller = TextEditingController(text: currentValue);
-    String selectedGender = currentValue?.isEmpty ?? true ? 'Male' : currentValue!;
-    int numberValue = (isNumber && currentValue != null && currentValue.isNotEmpty) ? int.parse(currentValue) : (field == 'height' ? 150 : 70);
+    String selectedGender =
+    currentValue?.isEmpty ?? true ? 'Male' : currentValue!;
+
+    int numberValue = (isNumber && currentValue != null && currentValue.isNotEmpty)
+        ? (double.tryParse(currentValue)?.round() ?? (field == 'height' ? 150 : 70))
+        : (field == 'height' ? 150 : 70);
 
     await showDialog(
       context: context,
       builder: (context) {
-        final translations = globalIsPolish.value ? Translations.pl : Translations.en;
+        final translations =
+        globalIsPolish.value ? Translations.pl : Translations.en;
         return StatefulBuilder(
           builder: (context, setDialogState) {
-            return AlertDialog(
-              backgroundColor: const Color(0xFF1a1a1a),
-              title: Text(
-                translations['edit']! + ' $label',
-                style: GoogleFonts.bebasNeue(fontSize: 24, color: const Color(0xFFffc300)),
-              ),
-              content: isDate
-                  ? TextField(
+            Widget contentWidget;
+
+            if (isDate) {
+              contentWidget = TextField(
                 controller: controller,
                 style: const TextStyle(color: Color(0xFFffc300)),
                 cursorColor: const Color(0xFFffc300),
@@ -274,72 +324,106 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 onTap: () async {
                   final picked = await showDatePicker(
                     context: context,
-                    initialDate: DateTime.now(),
+                    initialDate: DateTime.tryParse(currentValue ?? '') ??
+                        DateTime.now(),
                     firstDate: DateTime(1900),
                     lastDate: DateTime.now(),
+                    builder: (context, child) {
+                      return Theme(
+                        data: ThemeData.dark().copyWith(
+                          colorScheme: const ColorScheme.dark(
+                            primary: Color(0xFFffc300),
+                            onPrimary: Color(0xFF242424),
+                            onSurface: Colors.white,
+                          ),
+                          dialogBackgroundColor: const Color(0xFF242424),
+                          textButtonTheme: TextButtonThemeData(
+                            style: TextButton.styleFrom(
+                              foregroundColor: const Color(0xFFffc300),
+                            ),
+                          ),
+                        ),
+                        child: child!,
+                      );
+                    },
                   );
                   if (picked != null) {
                     setDialogState(() {
-                      controller.text = picked.toIso8601String().split('T')[0];
+                      controller.text =
+                      picked.toIso8601String().split('T')[0];
                     });
                   }
                 },
-                decoration: InputDecoration(
-                  labelText: label,
-                  labelStyle: const TextStyle(color: Color(0xFFffc300)),
-                  enabledBorder: const OutlineInputBorder(borderSide: BorderSide(color: Color(0xFFffc300))),
-                  focusedBorder: const OutlineInputBorder(borderSide: BorderSide(color: Color(0xFFffda66), width: 2)),
-                ),
-              )
-                  : isGender
-                  ? DropdownButton<String>(
-                value: ['Male', 'Female'].contains(selectedGender) ? selectedGender : 'Male',
-                items: [
-                  DropdownMenuItem(
+                decoration: _dialogInputDecoration(label),
+              );
+            } else if (isGender) {
+              contentWidget = SegmentedButton<String>(
+                segments: <ButtonSegment<String>>[
+                  ButtonSegment<String>(
                     value: 'Male',
-                    child: Text(translations['male']!, style: const TextStyle(color: Color(0xFFffc300))),
+                    label: Text(translations['male'] ?? 'Male'),
+                    icon: Icon(Icons.male),
                   ),
-                  DropdownMenuItem(
+                  ButtonSegment<String>(
                     value: 'Female',
-                    child: Text(translations['female']!, style: const TextStyle(color: Color(0xFFffc300))),
+                    label: Text(translations['female'] ?? 'Female'),
+                    icon: Icon(Icons.female),
                   ),
                 ],
-                onChanged: (value) {
+                selected: {selectedGender},
+                onSelectionChanged: (Set<String> newSelection) {
                   setDialogState(() {
-                    selectedGender = value ?? 'Male';
+                    selectedGender = newSelection.first;
                   });
-                  print('Gender changed to: $selectedGender');
                 },
-                dropdownColor: const Color(0xFF1a1a1a),
-                style: const TextStyle(color: Color(0xFFffc300)),
-                isExpanded: true,
-              )
-                  : isNumber
-                  ? NumberPicker(
+                style: SegmentedButton.styleFrom(
+                  backgroundColor: const Color(0xFF1a1a1a),
+                  foregroundColor: const Color(0xFFffc300),
+                  selectedBackgroundColor: const Color(0xFFffc300),
+                  selectedForegroundColor: const Color(0xFF242424),
+                  side: const BorderSide(color: Color(0xFFffc300)),
+                ),
+                showSelectedIcon: false,
+              );
+            } else if (isNumber) {
+              contentWidget = NumberPicker(
                 value: numberValue,
                 minValue: field == 'height' ? 50 : 30,
                 maxValue: field == 'height' ? 250 : 200,
                 textStyle: const TextStyle(color: Color(0xFFffc300)),
-                selectedTextStyle: const TextStyle(color: Color(0xFFffda66), fontSize: 24),
-                onChanged: (value) => setDialogState(() => numberValue = value),
-              )
-                  : TextField(
+                selectedTextStyle: const TextStyle(
+                    color: Color(0xFFffda66), fontSize: 24),
+                onChanged: (value) =>
+                    setDialogState(() => numberValue = value),
+              );
+            } else {
+              contentWidget = TextField(
                 controller: controller,
                 style: const TextStyle(color: Color(0xFFffc300)),
                 cursorColor: const Color(0xFFffc300),
-                decoration: InputDecoration(
-                  labelText: label,
-                  labelStyle: const TextStyle(color: Color(0xFFffc300)),
-                  enabledBorder: const OutlineInputBorder(borderSide: BorderSide(color: Color(0xFFffc300))),
-                  focusedBorder: const OutlineInputBorder(borderSide: BorderSide(color: Color(0xFFffda66), width: 2)),
-                ),
+                decoration: _dialogInputDecoration(label),
+              );
+            }
+
+            return AlertDialog(
+              backgroundColor: const Color(0xFF242424),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12)),
+              title: Text(
+                translations['edit']! + ' $label',
+                style: GoogleFonts.bebasNeue(
+                    fontSize: 24, color: const Color(0xFFffc300)),
+              ),
+              content: SingleChildScrollView(
+                child: contentWidget,
               ),
               actions: [
                 TextButton(
                   onPressed: () => Navigator.pop(context),
                   child: Text(
                     translations['cancel']!,
-                    style: GoogleFonts.bebasNeue(fontSize: 18, color: const Color(0xFFffc300)),
+                    style: GoogleFonts.bebasNeue(
+                        fontSize: 18, color: const Color(0xFFffc300)),
                   ),
                 ),
                 TextButton(
@@ -348,13 +432,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         ? {field: selectedGender}
                         : isNumber
                         ? {field: numberValue.toDouble()}
-                        : {field: controller.text.isEmpty ? null : controller.text};
+                        : {
+                      field: controller.text.isEmpty
+                          ? null
+                          : controller.text
+                    };
                     _updateProfile(body);
                     Navigator.pop(context);
                   },
                   child: Text(
                     translations['save']!,
-                    style: GoogleFonts.bebasNeue(fontSize: 18, color: const Color(0xFFffc300)),
+                    style: GoogleFonts.bebasNeue(
+                        fontSize: 18, color: const Color(0xFFffc300)),
                   ),
                 ),
               ],
@@ -371,33 +460,144 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Widget _buildAvatar() {
-    return GestureDetector(
-      onTap: _pickAndUploadAvatar,
-      child: CircleAvatar(
-        radius: 50,
-        backgroundColor: const Color(0xFF242424),
-        child: _image != null
-            ? ClipOval(child: Image.file(_image!, fit: BoxFit.cover))
-            : _avatarUrl != null && _avatarUrl!.isNotEmpty
-            ? CachedNetworkImage(
-          imageUrl: '${AuthService.baseUrl}$_avatarUrl',
-          imageBuilder: (context, imageProvider) => Container(
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              image: DecorationImage(image: imageProvider, fit: BoxFit.cover),
+    return Center(
+      child: Stack(
+        children: [
+          CircleAvatar(
+            radius: 60,
+            backgroundColor: const Color(0xFF242424),
+            child: _image != null
+                ? ClipOval(
+                child: Image.file(_image!,
+                    width: 120, height: 120, fit: BoxFit.cover))
+                : _avatarUrl != null && _avatarUrl!.isNotEmpty
+                ? CachedNetworkImage(
+              imageUrl: '${AuthService.baseUrl}$_avatarUrl',
+              imageBuilder: (context, imageProvider) => Container(
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  image: DecorationImage(
+                      image: imageProvider, fit: BoxFit.cover),
+                ),
+              ),
+              placeholder: (context, url) =>
+              const CircularProgressIndicator(
+                valueColor:
+                AlwaysStoppedAnimation<Color>(Color(0xFFffc300)),
+              ),
+              errorWidget: (context, url, error) {
+                return const Icon(Icons.person,
+                    size: 60, color: Color(0xFFffc300));
+              },
+            )
+                : const Icon(Icons.person,
+                size: 60, color: Color(0xFFffc300)),
+          ),
+          if (!_isOffline)
+            Positioned(
+              bottom: 0,
+              right: 0,
+              child: GestureDetector(
+                onTap: _pickAndUploadAvatar,
+                child: Container(
+                  padding: const EdgeInsets.all(6),
+                  decoration: const BoxDecoration(
+                    color: Color(0xFFffc300),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.edit,
+                    color: Color(0xFF242424),
+                    size: 20,
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildProfileCard(
+      String label, String? value, String field, IconData icon,
+      {bool isNumber = false, bool isDate = false, bool isGender = false}) {
+    String displayValue = value ?? '-';
+    if (isGender && value != null && value.isNotEmpty) {
+      displayValue = globalIsPolish.value
+          ? Translations.pl[value.toLowerCase()] ?? value
+          : Translations.en[value.toLowerCase()] ?? value;
+    }
+    if (isDate) {
+      displayValue = _formatDate(value);
+    }
+    if (isNumber && value != null && value.isNotEmpty) {
+      displayValue =
+      '${double.tryParse(value)?.toStringAsFixed(0) ?? '-'} ${field == 'height' ? 'cm' : 'kg'}';
+    }
+
+    return Card(
+      color: const Color(0xFF242424),
+      elevation: 4,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: InkWell(
+        onTap: _isOffline ? null : () => _showEditDialog(label, value, field,
+            isNumber: isNumber, isDate: isDate, isGender: isGender),
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 20.0),
+          child: Row(
+            children: [
+              Icon(icon, color: const Color(0xFFffc300), size: 28),
+              const SizedBox(width: 16),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    label,
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.7),
+                      fontSize: 14,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    displayValue,
+                    style: GoogleFonts.bebasNeue(
+                      fontSize: 24,
+                      color: Colors.white,
+                      letterSpacing: 1,
+                    ),
+                  ),
+                ],
+              ),
+              const Spacer(),
+              if (!_isOffline)
+                const Icon(Icons.edit, color: Colors.white54, size: 20),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildOfflineWarning(Map<String, String> translations) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12.0),
+      color: const Color(0xFFffc300),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.wifi_off, color: const Color(0xFF242424), size: 20),
+          const SizedBox(width: 10),
+          Text(
+            translations['offlineReadOnly'] ?? 'Brak połączenia. Tryb tylko do odczytu.',
+            style: TextStyle(
+              color: const Color(0xFF242424),
+              fontWeight: FontWeight.bold,
             ),
           ),
-          placeholder: (context, url) => const CircularProgressIndicator(
-            valueColor: AlwaysStoppedAnimation<Color>(Color(0xFFffc300)),
-          ),
-          errorWidget: (context, url, error) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text(globalIsPolish.value ? 'Błąd ładowania avatara' : 'Failed to load avatar')),
-            );
-            return const Icon(Icons.error, size: 50, color: Color(0xFFffc300));
-          },
-        )
-            : const Icon(Icons.camera_alt, size: 50, color: Color(0xFFffc300)),
+        ],
       ),
     );
   }
@@ -414,40 +614,110 @@ class _ProfileScreenState extends State<ProfileScreen> {
           backgroundColor: const Color(0xFF1a1a1a),
           body: _isInitialLoading
               ? _buildSkeletonLoader()
-              : _isLoading
-              ? const Center(child: CircularProgressIndicator(valueColor: AlwaysStoppedAnimation<Color>(Color(0xFFffc300))))
-              : SingleChildScrollView(
-            padding: const EdgeInsets.all(16),
-            child: Column(
+              : RefreshIndicator(
+            onRefresh: _fetchProfile,
+            color: const Color(0xFF242424),
+            backgroundColor: const Color(0xFFffc300),
+            child: Stack(
               children: [
-                Text(translations['profile'] ?? 'Profile', style: GoogleFonts.bebasNeue(fontSize: 36, color: const Color(0xFFffc300))),
-                const SizedBox(height: 20),
-                _buildAvatar(),
-                const SizedBox(height: 10),
-                Text(translations['avatar'] ?? 'Change avatar', style: const TextStyle(color: Color(0xFFffc300))),
-                const SizedBox(height: 20),
-                _buildInfoRow(translations['firstName'] ?? 'First Name', _firstName, 'firstName'),
-                const SizedBox(height: 16),
-                _buildInfoRow(translations['lastName'] ?? 'Last Name', _lastName, 'lastName'),
-                const SizedBox(height: 16),
-                _buildInfoRow(translations['birthDate'] ?? 'Birth Date', _formatDate(_birthDate), 'birthDate', isDate: true),
-                const SizedBox(height: 16),
-                _buildInfoRow(
-                  translations['gender'] ?? 'Gender',
-                  _gender?.isEmpty ?? true ? '-' : translations[_gender!.toLowerCase()] ?? '-',
-                  'gender',
-                  isGender: true,
-                ),
-                const SizedBox(height: 16),
-                _buildInfoRow(translations['height'] ?? 'Height (cm)', _height, 'height', isNumber: true),
-                const SizedBox(height: 16),
-                _buildInfoRow(translations['weight'] ?? 'Weight (kg)', _weight, 'weight', isNumber: true),
-                const SizedBox(height: 20),
-                ElevatedButton(
-                  style: _buttonStyle(),
-                  onPressed: _logout,
-                  child: Text(translations['logout'] ?? 'Logout'),
-                ),
+                if (!_isLoading && !_isInitialLoading)
+                  ListView(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    padding: const EdgeInsets.all(0),
+                    children: [
+                      if (_isOffline) _buildOfflineWarning(translations),
+                      Padding(
+                        padding: const EdgeInsets.all(16.0),
+                        child: Column(
+                          children: [
+                            Center(
+                              child: Text(
+                                translations['profile'] ?? 'Profile',
+                                style: GoogleFonts.bebasNeue(
+                                    fontSize: 42,
+                                    color: const Color(0xFFffc300),
+                                    letterSpacing: 1.5),
+                              ),
+                            ),
+                            const SizedBox(height: 20),
+                            _buildAvatar(),
+                            const SizedBox(height: 30),
+                            _buildProfileCard(
+                              translations['firstName'] ?? 'First Name',
+                              _firstName,
+                              'firstName',
+                              Icons.person_outline,
+                            ),
+                            const SizedBox(height: 12),
+                            _buildProfileCard(
+                              translations['lastName'] ?? 'Last Name',
+                              _lastName,
+                              'lastName',
+                              Icons.person,
+                            ),
+                            const SizedBox(height: 12),
+                            _buildProfileCard(
+                              translations['birthDate'] ?? 'Birth Date',
+                              _birthDate,
+                              'birthDate',
+                              Icons.calendar_today,
+                              isDate: true,
+                            ),
+                            const SizedBox(height: 12),
+                            _buildProfileCard(
+                              translations['gender'] ?? 'Gender',
+                              _gender,
+                              'gender',
+                              Icons.wc,
+                              isGender: true,
+                            ),
+                            const SizedBox(height: 12),
+                            _buildProfileCard(
+                              translations['height'] ?? 'Height (cm)',
+                              _height,
+                              'height',
+                              Icons.height,
+                              isNumber: true,
+                            ),
+                            const SizedBox(height: 12),
+                            _buildProfileCard(
+                              translations['weight'] ?? 'Weight (kg)',
+                              _weight,
+                              'weight',
+                              Icons.monitor_weight,
+                              isNumber: true,
+                            ),
+                            const SizedBox(height: 30),
+                            ElevatedButton.icon(
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor:
+                                const Color(0xFFD32F2F),
+                                foregroundColor: Colors.white,
+                                minimumSize: const Size(double.infinity, 50),
+                                shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(12)),
+                              ),
+                              onPressed: _logout,
+                              icon: const Icon(Icons.logout),
+                              label: Text(
+                                translations['logout'] ?? 'Logout',
+                                style: GoogleFonts.bebasNeue(
+                                  fontSize: 24,
+                                  letterSpacing: 1.5,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 20),
+                          ],
+                        ),
+                      ),
+                    ],
+                  )
+                else
+                  const Center(
+                      child: CircularProgressIndicator(
+                          valueColor: AlwaysStoppedAnimation<Color>(
+                              Color(0xFFffc300)))),
               ],
             ),
           ),
@@ -460,69 +730,41 @@ class _ProfileScreenState extends State<ProfileScreen> {
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           Container(
-            width: double.infinity,
-            height: 36,
+            width: 200,
+            height: 40,
             color: Colors.grey[800],
           ),
           const SizedBox(height: 20),
           CircleAvatar(
-            radius: 50,
+            radius: 60,
             backgroundColor: Colors.grey[800],
           ),
-          const SizedBox(height: 10),
-          Container(
-            width: 100,
-            height: 16,
-            color: Colors.grey[800],
-          ),
-          const SizedBox(height: 20),
+          const SizedBox(height: 30),
           for (var i = 0; i < 6; i++) ...[
             Container(
               width: double.infinity,
-              height: 20,
-              color: Colors.grey[800],
+              height: 70,
+              decoration: BoxDecoration(
+                color: Colors.grey[800],
+                borderRadius: BorderRadius.circular(12),
+              ),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 12),
           ],
+          const SizedBox(height: 18),
           Container(
-            width: 120,
-            height: 40,
-            color: Colors.grey[800],
+            width: double.infinity,
+            height: 50,
+            decoration: BoxDecoration(
+              color: Colors.grey[800],
+              borderRadius: BorderRadius.circular(12),
+            ),
           ),
         ],
       ),
-    );
-  }
-
-  Widget _buildInfoRow(String label, String? value, String field, {bool isNumber = false, bool isDate = false, bool isGender = false}) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        Expanded(
-          child: Text(
-            '$label: ${value ?? '-'}',
-            style: GoogleFonts.bebasNeue(fontSize: 20, color: const Color(0xFFffc300)),
-          ),
-        ),
-        IconButton(
-          icon: const Icon(Icons.edit, color: Color(0xFFffc300)),
-          onPressed: () => _showEditDialog(label, value, field, isNumber: isNumber, isDate: isDate, isGender: isGender),
-        ),
-      ],
-    );
-  }
-
-  ButtonStyle _buttonStyle() {
-    return ButtonStyle(
-      backgroundColor: WidgetStateProperty.resolveWith<Color>((states) => states.contains(WidgetState.pressed) ? const Color(0xFFffda66) : const Color(0xFFffc300)),
-      foregroundColor: WidgetStateProperty.all(const Color(0xFF242424)),
-      padding: WidgetStateProperty.all(const EdgeInsets.symmetric(horizontal: 20, vertical: 10)),
-      textStyle: WidgetStateProperty.all(GoogleFonts.bebasNeue(fontSize: 24, fontWeight: FontWeight.w600)),
-      shape: WidgetStateProperty.all(RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
-      elevation: WidgetStateProperty.resolveWith<double>((states) => states.contains(WidgetState.pressed) ? 4 : 8),
-      shadowColor: WidgetStateProperty.all(Colors.black26),
     );
   }
 }

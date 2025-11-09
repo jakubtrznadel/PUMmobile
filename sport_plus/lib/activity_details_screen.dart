@@ -1,9 +1,11 @@
 import 'dart:convert';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:flutter_file_dialog/flutter_file_dialog.dart';
 import '../models/activity.dart';
 import '../services/auth_service.dart';
 import '../language_state.dart';
@@ -23,6 +25,7 @@ class _ActivityDetailsScreenState extends State<ActivityDetailsScreen> {
   final _authService = AuthService();
   Activity? _activity;
   bool _isLoading = true;
+  bool _isExporting = false;
   List<LatLng> _routePoints = [];
   final MapController _mapController = MapController();
 
@@ -65,8 +68,7 @@ class _ActivityDetailsScreenState extends State<ActivityDetailsScreen> {
       _parseGpsTrack(activity.gpsTrack);
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(e.toString())));
+        _showError(e.toString());
       }
     } finally {
       if (mounted) {
@@ -74,6 +76,64 @@ class _ActivityDetailsScreenState extends State<ActivityDetailsScreen> {
           _isLoading = false;
         });
       }
+    }
+  }
+
+  Future<void> _handleExportGpx() async {
+    if (_isExporting) return;
+
+    setState(() {
+      _isExporting = true;
+    });
+
+    final translations =
+    globalIsPolish.value ? Translations.pl : Translations.en;
+
+    try {
+      final Uint8List gpxBytes =
+      await _authService.exportActivityToGpx(widget.activityId);
+
+      String fileName =
+          'activity_${_activity?.name.replaceAll(' ', '_') ?? widget.activityId}.gpx';
+
+      final String? path = await FlutterFileDialog.saveFile(
+        params: SaveFileDialogParams(
+          data: gpxBytes,
+          fileName: fileName,
+        ),
+      );
+
+      if (path != null) {
+        _showSuccess(
+            '${translations['fileSaved'] ?? 'Zapisano plik'}: $fileName');
+      } else {
+        print("Zapisywanie pliku anulowane przez użytkownika.");
+      }
+    } catch (e) {
+      _showError(
+          '${translations['exportError'] ?? 'Błąd podczas eksportu'}: ${e.toString()}');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isExporting = false;
+        });
+      }
+    }
+  }
+
+  void _showError(String message) {
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(message), backgroundColor: Colors.red),
+      );
+    }
+  }
+
+  void _showSuccess(String message) {
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(message), backgroundColor: Colors.green),
+      );
     }
   }
 
@@ -180,7 +240,7 @@ class _ActivityDetailsScreenState extends State<ActivityDetailsScreen> {
           body: _isLoading
               ? const Center(
             child: CircularProgressIndicator(
-              valueColor: AlwaysStoppedAnimation<Color>(Color(0xFFffc300)),
+              valueColor: AlwaysStoppedAnimation<Color>(Color(0xFFffc3D)),
             ),
           )
               : _activity == null
@@ -189,7 +249,7 @@ class _ActivityDetailsScreenState extends State<ActivityDetailsScreen> {
               translations['activityNotFound'] ?? 'Activity not found',
               style: GoogleFonts.bebasNeue(
                 fontSize: 24,
-                color: const Color(0xFFffc300),
+                color: const Color(0xFFffc3D0),
               ),
             ),
           )
@@ -242,7 +302,38 @@ class _ActivityDetailsScreenState extends State<ActivityDetailsScreen> {
                     ),
                   ],
                 ),
+
+                if (_activity!.note != null &&
+                    _activity!.note!.isNotEmpty) ...[
+                  const SizedBox(height: 16),
+                  Text(
+                    translations['note'] ?? 'Notatka',
+                    style: GoogleFonts.bebasNeue(
+                      fontSize: 24,
+                      color: const Color(0xFFffc300),
+                      letterSpacing: 1.0,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12.0),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF242424),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Text(
+                      _activity!.note!,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                      ),
+                    ),
+                  ),
+                ],
+
                 const SizedBox(height: 16),
+
                 if (_routePoints.isNotEmpty)
                   SizedBox(
                     height: 220,
@@ -291,6 +382,7 @@ class _ActivityDetailsScreenState extends State<ActivityDetailsScreen> {
                       ),
                     ),
                   ),
+
                 if (_activity!.photoUrl != null &&
                     _activity!.photoUrl!.isNotEmpty) ...[
                   const SizedBox(height: 16),
@@ -326,6 +418,42 @@ class _ActivityDetailsScreenState extends State<ActivityDetailsScreen> {
                     ),
                   ),
                 ],
+
+                const SizedBox(height: 24),
+
+                ElevatedButton.icon(
+                  onPressed: _isExporting ? null : _handleExportGpx,
+                  icon: _isExporting
+                      ? Container(
+                    width: 20,
+                    height: 20,
+                    child: const CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation<Color>(
+                          Color(0xFF242424)),
+                    ),
+                  )
+                      : const Icon(Icons.download,
+                      color: Color(0xFF242424)),
+                  label: Text(
+                    _isExporting
+                        ? (translations['exporting'] ?? 'Eksportowanie...')
+                        : (translations['exportToGpx'] ??
+                        'Eksportuj do GPX'),
+                    style: GoogleFonts.bebasNeue(
+                      fontSize: 20,
+                      color: const Color(0xFF242424),
+                      letterSpacing: 1,
+                    ),
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFffc300),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                ),
               ],
             ),
           ),
