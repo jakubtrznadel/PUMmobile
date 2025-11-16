@@ -5,7 +5,7 @@ publish_to: 'none'
 version: 1.0.0+1
 
 environment:
-  sdk: ^3.9.2
+  sdk: '>=3.4.0 <4.0.0'
 
 dependencies:
   flutter:
@@ -20,18 +20,27 @@ dependencies:
   numberpicker: ^2.1.2
   flutter_map: ^7.0.2
   latlong2: ^0.9.1
-  location: ^6.0.0
   geolocator: ^12.0.0
   connectivity_plus: ^6.0.5
   path_provider: ^2.1.3
   flutter_file_dialog: ^3.0.2
 
+  flutter_background_service: ^5.0.5
+  flutter_background_service_android: ^6.2.2
+  permission_handler: ^11.3.1
+  device_info_plus: ^10.1.0
+  flutter_local_notifications: ^17.2.1
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
 
+  flutter_launcher_icons: "^0.13.1"
 
 flutter:
-
   uses-material-design: true
 
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: "C:/sport_plus/lib/assets/logo.png"

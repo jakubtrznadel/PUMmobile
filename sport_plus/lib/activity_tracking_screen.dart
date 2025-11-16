@@ -3,12 +3,13 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:geolocator/geolocator.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter_background_service/flutter_background_service.dart';
+import 'package:geolocator/geolocator.dart';
 import '../models/activity.dart';
 import '../services/auth_service.dart';
 import '../language_state.dart';
@@ -31,70 +32,42 @@ class ActivityTrackingScreen extends StatefulWidget {
 class _ActivityTrackingScreenState extends State<ActivityTrackingScreen> {
   final _authService = AuthService();
   final ImagePicker _picker = ImagePicker();
+  final _service = FlutterBackgroundService();
+
   bool _isTracking = false;
-  DateTime? _startTime;
-  double _distance = 0.0;
-  List<Position> _positions = [];
-  StreamSubscription<Position>? _positionStream;
   String _activityType = 'running';
   String _activityName = '';
   String _note = '';
   File? _photo;
-  LatLng? _currentPosition;
   final MapController _mapController = MapController();
-  Timer? _timer;
   bool _isSaving = false;
 
+  StreamSubscription<Map<String, dynamic>?>? _serviceSubscription;
+  StreamSubscription<Map<String, dynamic>?>? _finalDataSubscription;
+  Map<String, dynamic>? _serviceData;
+
+  List<LatLng> _routePoints = [];
+  double _distance = 0.0;
+  int _durationInSeconds = 0;
   double _averageSpeed = 0.0;
   double _pace = 0.0;
+  LatLng? _currentPosition;
 
   @override
   void initState() {
     super.initState();
-    _startLocationStream();
+    _bindService();
+    _checkPermissionAndLocate();
   }
 
-  @override
-  void dispose() {
-    _positionStream?.cancel();
-    _timer?.cancel();
-    _mapController.dispose();
-    super.dispose();
-  }
-
-  Future<bool> _checkLocationServicesAndPermissions() async {
-    final translations =
-    globalIsPolish.value ? Translations.pl : Translations.en;
+  Future<void> _checkPermissionAndLocate() async {
     bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
     if (!serviceEnabled && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: Text('Usługa lokalizacji wyłączona. Włącz lokalizację.'),
           backgroundColor: Colors.red));
-      return false;
+      return;
     }
-    LocationPermission permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
-      if (permission == LocationPermission.denied && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text('Odmówiono dostępu do lokalizacji.'),
-            backgroundColor: Colors.red));
-        return false;
-      }
-    }
-    if (permission == LocationPermission.deniedForever && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(
-              'Dostęp do lokalizacji zablokowany. Włącz go w ustawieniach aplikacji.'),
-          backgroundColor: Colors.red));
-      return false;
-    }
-    return true;
-  }
-
-  void _startLocationStream() async {
-    bool hasPermission = await _checkLocationServicesAndPermissions();
-    if (!hasPermission) return;
 
     try {
       Position initialPosition = await Geolocator.getCurrentPosition(
@@ -109,85 +82,74 @@ class _ActivityTrackingScreenState extends State<ActivityTrackingScreen> {
         });
       }
     } catch (e) {
-      print("Nie udało się pobrać początkowej lokalizacji: $e");
     }
+  }
 
-    _positionStream = Geolocator.getPositionStream(
-      locationSettings: const LocationSettings(
-        accuracy: LocationAccuracy.high,
-        distanceFilter: 0,
-      ),
-    ).listen((Position position) {
-      if (mounted) {
+  void _bindService() {
+    _serviceSubscription = _service.on('update').listen((data) {
+      if (data == null) return;
+      setState(() {
+        _isTracking = data['isRunning'] ?? false;
+
+        _distance = (data['distance'] as num?)?.toDouble() ?? 0.0;
+        _durationInSeconds = (data['duration'] as num?)?.toInt() ?? 0;
+        _averageSpeed = (data['averageSpeed'] as num?)?.toDouble() ?? 0.0;
+        _pace = (data['pace'] as num?)?.toDouble() ?? 0.0;
+
+        final List<dynamic> points = data['positions'] ?? [];
+        _routePoints = points
+            .map((p) => LatLng(p['lat']!, p['lon']!))
+            .toList();
+
+        if (_routePoints.isNotEmpty) {
+          _currentPosition = _routePoints.last;
+          _mapController.move(_currentPosition!, _mapController.camera.zoom);
+        }
+      });
+    });
+
+    _finalDataSubscription = _service.on('finalData').listen((data) {
+      if (data == null) {
         setState(() {
-          _currentPosition = LatLng(position.latitude, position.longitude);
-          if (_isTracking) {
-            if (_positions.isNotEmpty) {
-              _distance += Geolocator.distanceBetween(
-                _positions.last.latitude,
-                _positions.last.longitude,
-                position.latitude,
-                position.longitude,
-              );
-            }
-            _positions.add(position);
-            _mapController.move(
-                LatLng(position.latitude, position.longitude),
-                _mapController.camera.zoom);
-          }
+          _isSaving = false;
         });
+        return;
+      }
+      _performSave(data);
+    });
+
+    _service.isRunning().then((isRunning) {
+      if (isRunning) {
       }
     });
+  }
+
+  @override
+  void dispose() {
+    _serviceSubscription?.cancel();
+    _finalDataSubscription?.cancel();
+    _mapController.dispose();
+    super.dispose();
   }
 
   void _startTracking() async {
-    bool hasPermission = await _checkLocationServicesAndPermissions();
-    if (!hasPermission) return;
-
-    setState(() {
-      _isTracking = true;
-      _startTime = DateTime.now();
-      _positions = [];
-      _distance = 0.0;
-      _averageSpeed = 0.0;
-      _pace = 0.0;
-    });
-
-    _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
-      if (mounted) {
-        if (_isTracking && _startTime != null) {
-          final durationInSeconds =
-              DateTime.now().difference(_startTime!).inSeconds;
-          final durationInHours = durationInSeconds / 3600.0;
-          final distanceInKm = _distance / 1000.0;
-
-          double newPace = 0.0;
-          double newAvgSpeed = 0.0;
-
-          if (distanceInKm > 0 && durationInSeconds > 0) {
-            newAvgSpeed = distanceInKm / durationInHours;
-            final durationInMinutes = durationInSeconds / 60.0;
-            newPace = durationInMinutes / distanceInKm;
-          }
-
-          setState(() {
-            _averageSpeed = newAvgSpeed;
-            _pace = newPace;
-          });
-        }
-      } else {
-        timer.cancel();
-      }
-    });
+    bool serviceRunning = await _service.startService();
+    if (serviceRunning) {
+      _service.invoke('start');
+      setState(() {
+        _isTracking = true;
+      });
+    }
   }
 
   void _stopTracking() {
-    _timer?.cancel();
-    setState(() {
-      _isTracking = false;
-    });
-    if (_startTime != null) {
+    if (_durationInSeconds > 0) {
       _showSaveDialog();
+    } else {
+      _service.invoke('stop');
+      setState(() {
+        _isTracking = false;
+      });
     }
   }
 
@@ -202,26 +164,38 @@ class _ActivityTrackingScreenState extends State<ActivityTrackingScreen> {
   }
 
   Future<void> _saveActivity() async {
-    final translations =
-    globalIsPolish.value ? Translations.pl : Translations.en;
-    if (_startTime == null || _isSaving) return;
+    if (_isSaving) return;
 
     setState(() {
       _isSaving = true;
     });
 
     Navigator.of(context).pop();
+    _service.invoke('stop');
+  }
 
-    final durationInSeconds = DateTime.now().difference(_startTime!).inSeconds;
-    double? averageSpeed;
-    double? pace;
-    double distanceInKm = _distance / 1000.0;
+  Future<void> _performSave(Map<String, dynamic> finalData) async {
+    final translations =
+    globalIsPolish.value ? Translations.pl : Translations.en;
 
-    if (distanceInKm > 0 && durationInSeconds > 0) {
-      final durationInHours = durationInSeconds / 3600.0;
-      averageSpeed = distanceInKm / durationInHours;
-      pace = (durationInSeconds / 60.0) / distanceInKm;
+    final double finalDistance = (finalData['distance'] as num?)?.toDouble() ?? 0.0;
+    final double finalDuration = (finalData['duration'] as num?)?.toDouble() ?? 0.0;
+
+    if (finalDistance < 0.01 && finalDuration < 10) {
+      setState(() {
+        _isSaving = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(
+            translations['activityTooShort'] ?? 'Aktywność zbyt krótka, nie zapisano.'),
+        backgroundColor: Colors.orange,
+      ));
+      return;
     }
+
+    final double? finalAvgSpeed = (finalData['averageSpeed'] as num?)?.toDouble();
+    final double? finalPace = (finalData['pace'] as num?)?.toDouble();
+    final List<dynamic> finalPositions = finalData['positions'] ?? [];
 
     final activity = Activity(
       activityId: 0,
@@ -230,12 +204,11 @@ class _ActivityTrackingScreenState extends State<ActivityTrackingScreen> {
           ? _activityName
           : 'Aktywność z ${DateTime.now().toIso8601String()}',
       type: _activityType,
-      duration: durationInSeconds.toDouble(),
-      distance: double.parse(distanceInKm.toStringAsFixed(2)),
-      pace: pace,
-      averageSpeed: averageSpeed,
-      gpsTrack: jsonEncode(
-          _positions.map((p) => {'lat': p.latitude, 'lon': p.longitude}).toList()),
+      duration: finalDuration,
+      distance: double.parse((finalDistance / 1000.0).toStringAsFixed(2)),
+      pace: finalPace,
+      averageSpeed: finalAvgSpeed,
+      gpsTrack: jsonEncode(finalPositions),
       note: _note,
       photoUrl: null,
       createdAt: DateTime.now(),
@@ -245,23 +218,48 @@ class _ActivityTrackingScreenState extends State<ActivityTrackingScreen> {
     bool isOnline = connectivityResults
         .any((r) => r == ConnectivityResult.mobile || r == ConnectivityResult.wifi);
 
-    if (isOnline) {
+    if (!isOnline) {
+      await _saveActivityLocally(activity);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(translations['offlineSavedLocally'] ??
+              'Offline. Zapisano lokalnie.'),
+          backgroundColor: Colors.orange,
+        ));
+        await Future.delayed(const Duration(milliseconds: 1500));
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(
+            builder: (context) => ActivityDetailsScreen(activity: activity),
+          ),
+        );
+      }
+    } else {
+      int? newActivityId;
       try {
-        final newActivityId = await _authService.createActivity(activity.toJson());
+        newActivityId = await _authService.createActivity(activity.toJson());
+
         if (_photo != null && newActivityId != null) {
-          await _authService.uploadActivityPhoto(newActivityId, _photo!);
+          try {
+            await _authService.uploadActivityPhoto(newActivityId, _photo!);
+          } catch (photoError) {
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                content: Text(translations['activitySavedNoPhoto'] ??
+                    'Aktywność zapisana, ale błąd zdjęcia.'),
+                backgroundColor: Colors.orange,
+              ));
+            }
+          }
         }
 
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text(translations['activitySavedOnline'] ??
-                'Aktywność zapisana online!'),
-            backgroundColor: Colors.green,
-          ));
-
-          await Future.delayed(const Duration(milliseconds: 1500));
-
-          if (mounted && newActivityId != null) {
+          if (newActivityId != null) {
+            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+              content: Text(translations['activitySavedOnline'] ??
+                  'Aktywność zapisana online!'),
+              backgroundColor: Colors.green,
+            ));
+            await Future.delayed(const Duration(milliseconds: 1500));
             Navigator.of(context).pushReplacement(
               MaterialPageRoute(
                 builder: (context) =>
@@ -278,30 +276,7 @@ class _ActivityTrackingScreenState extends State<ActivityTrackingScreen> {
                 'Błąd serwera. Zapisano lokalnie.'),
             backgroundColor: Colors.orange,
           ));
-
           await Future.delayed(const Duration(milliseconds: 1500));
-
-          if (mounted) {
-            Navigator.of(context).pushReplacement(
-              MaterialPageRoute(
-                builder: (context) => ActivityDetailsScreen(activity: activity),
-              ),
-            );
-          }
-        }
-      }
-    } else {
-      await _saveActivityLocally(activity);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(translations['offlineSavedLocally'] ??
-              'Offline. Zapisano lokalnie.'),
-          backgroundColor: Colors.orange,
-        ));
-
-        await Future.delayed(const Duration(milliseconds: 1500));
-
-        if (mounted) {
           Navigator.of(context).pushReplacement(
             MaterialPageRoute(
               builder: (context) => ActivityDetailsScreen(activity: activity),
@@ -315,6 +290,7 @@ class _ActivityTrackingScreenState extends State<ActivityTrackingScreen> {
   Future<void> _saveActivityLocally(Activity activity) async {
     final prefs = await SharedPreferences.getInstance();
     var localActivitiesJSON = prefs.getStringList('local_activities') ?? [];
+
     final entry = {
       'activity': activity.toJson(),
       'photoPath': _photo?.path,
@@ -324,6 +300,7 @@ class _ActivityTrackingScreenState extends State<ActivityTrackingScreen> {
     if (!localActivitiesJSON.contains(entryString)) {
       localActivitiesJSON.add(entryString);
       await prefs.setStringList('local_activities', localActivitiesJSON);
+    } else {
     }
   }
 
@@ -452,11 +429,18 @@ class _ActivityTrackingScreenState extends State<ActivityTrackingScreen> {
   }
 
   String _formatPace(double paceInMinPerKm) {
-    if (paceInMinPerKm.isInfinite || paceInMinPerKm <= 0) {
+    if (paceInMinPerKm.isInfinite ||
+        paceInMinPerKm.isNaN ||
+        paceInMinPerKm <= 0) {
       return '--:--';
     }
     final int minutes = paceInMinPerKm.floor();
     final int seconds = ((paceInMinPerKm - minutes) * 60).round();
+
+    if (seconds == 60) {
+      return '${(minutes + 1).toString().padLeft(2, '0')}:00';
+    }
+
     return '$minutes:${seconds.toString().padLeft(2, '0')}';
   }
 
@@ -501,9 +485,7 @@ class _ActivityTrackingScreenState extends State<ActivityTrackingScreen> {
                       'https://tile.openstreetmap.org/{z}/{x}/{y}.png'),
                   PolylineLayer(polylines: [
                     Polyline(
-                        points: _positions
-                            .map((p) => LatLng(p.latitude, p.longitude))
-                            .toList(),
+                        points: _routePoints,
                         strokeWidth: 5.0,
                         color: const Color(0xFFffc300))
                   ]),
@@ -555,9 +537,7 @@ class _ActivityTrackingScreenState extends State<ActivityTrackingScreen> {
                           ),
                           _buildLiveStat(
                             translations['duration'] ?? 'Czas trwania',
-                            _formatTime(_startTime != null
-                                ? DateTime.now().difference(_startTime!).inSeconds
-                                : 0),
+                            _formatTime(_durationInSeconds),
                             Icons.timer_outlined,
                           ),
                           _buildLiveStat(

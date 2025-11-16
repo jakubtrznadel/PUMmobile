@@ -104,6 +104,9 @@ class Translations {
     'passwordResetSuccess': 'Hasło zresetowane! Zaloguj się.',
     'invalidToken': 'Token niepoprawny lub wygasł.',
     'userNotFound': 'Nie znaleziono użytkownika.',
+    'serviceRunning': 'Usługa śledzenia gotowa.',
+    'activityTooShort': 'Aktywność zbyt krótka, nie zapisano.',
+    'activitySavedNoPhoto': 'Aktywność zapisana, ale błąd wysyłania zdjęcia.',
   };
 
   static const Map<String, String> en = {
@@ -210,5 +213,8 @@ class Translations {
     'passwordResetSuccess': 'Password reset! Please log in.',
     'invalidToken': 'Token is invalid or expired.',
     'userNotFound': 'User not found.',
+    'serviceRunning': 'Tracking service is ready.',
+    'activityTooShort': 'Activity too short, not saved.',
+    'activitySavedNoPhoto': 'Activity saved, but photo upload failed.',
   };
 }

@@ -40,7 +40,7 @@
 | Funkcjonalność | Status |
 | :--- | :---: |
 | Interfejs przyjazny użytkownikowi (UX) | ✅ |
-| Śledzenie aktywności w tle (gdy aplikacja jest wyłączona) | ⚙️ |
+| Śledzenie aktywności w tle (gdy aplikacja jest wyłączona) | ✅ |
 
 ### ⭐ Rozszerzenia Opcjonalne
 

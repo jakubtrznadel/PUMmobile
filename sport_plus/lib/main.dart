@@ -7,6 +7,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:http/io_client.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'profile_screen.dart';
 import 'custom_app_bar.dart';
 import 'translations.dart';
@@ -18,6 +20,7 @@ import 'stats_screen.dart';
 import 'login_screen.dart';
 import 'ranking_screen.dart';
 import 'animations/splash_animation.dart';
+import 'services/background_service.dart';
 
 class MyHttpOverrides extends HttpOverrides {
   @override
@@ -28,10 +31,49 @@ class MyHttpOverrides extends HttpOverrides {
   }
 }
 
+Future<void> _createNotificationChannel() async {
+  final flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
+  const channel = AndroidNotificationChannel(
+    'sport_plus_channel',
+    'Śledzenie Sport+',
+    description: 'Powiadomienia dotyczące śledzenia aktywności',
+    importance: Importance.low,
+    showBadge: false,
+  );
+
+  await flutterLocalNotificationsPlugin
+      .resolvePlatformSpecificImplementation<
+      AndroidFlutterLocalNotificationsPlugin>()
+      ?.createNotificationChannel(channel);
+}
+
+Future<void> _requestPermissions() async {
+  if (await Permission.location.isDenied) {
+    await Permission.location.request();
+  }
+
+  if (await Permission.locationWhenInUse.isGranted) {
+    await Permission.locationAlways.request();
+  }
+
+  if (Platform.isAndroid) {
+    if (await Permission.notification.isDenied) {
+      await Permission.notification.request();
+    }
+  }
+}
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   HttpOverrides.global = MyHttpOverrides();
   await loadLanguagePreference();
+  await _requestPermissions();
+
+  if (Platform.isAndroid) {
+    await _createNotificationChannel();
+  }
+
+  await initializeService();
   runApp(const MyApp());
 }
 
@@ -96,15 +138,19 @@ class _MainScreenState extends State<MainScreen> {
 
   Future<void> _syncLocalActivities(SharedPreferences prefs) async {
     var localActivitiesJSON = prefs.getStringList('local_activities') ?? [];
-    if (localActivitiesJSON.isEmpty) return;
+    if (localActivitiesJSON.isEmpty) {
+      return;
+    }
 
-    List<String> successfullySynced = [];
+    List<String> activitiesToRemove = [];
     List<String> remainingActivities = List.from(localActivitiesJSON);
 
     for (var entryJSON in localActivitiesJSON) {
+      activitiesToRemove.add(entryJSON);
+      Map<String, dynamic> activityData = {};
       try {
         final entry = jsonDecode(entryJSON);
-        final activityData = entry['activity'];
+        activityData = entry['activity'];
         final photoPath = entry['photoPath'];
 
         final newActivityId =
@@ -117,14 +163,13 @@ class _MainScreenState extends State<MainScreen> {
                 newActivityId, photoFile);
           }
         }
-        successfullySynced.add(entryJSON);
       } catch (e) {
       }
     }
 
-    if (successfullySynced.isNotEmpty) {
+    if (activitiesToRemove.isNotEmpty) {
       remainingActivities
-          .removeWhere((item) => successfullySynced.contains(item));
+          .removeWhere((item) => activitiesToRemove.contains(item));
       await prefs.setStringList('local_activities', remainingActivities);
     }
   }
@@ -183,9 +228,8 @@ class _MainScreenState extends State<MainScreen> {
         }
 
         try {
-          await _syncLocalActivities(prefs).timeout(const Duration(seconds: 3));
+          await _syncLocalActivities(prefs);
         } catch (syncError) {
-          print("Synchronizacja przekroczyła limit czasu lub nie powiodła się.");
         }
 
       } catch (e) {
@@ -283,11 +327,16 @@ class _MainScreenState extends State<MainScreen> {
                   const SizedBox(height: 20),
                   ElevatedButton(
                       style: _customButtonStyle(),
-                      onPressed: () => Navigator.push(
+                      onPressed: () {
+                        Navigator.push(
                           context,
                           MaterialPageRoute(
                               builder: (context) =>
-                                  ActivityTrackingScreen())),
+                                  ActivityTrackingScreen()),
+                        ).then((_) {
+                          _fetchProfileAndSyncActivities();
+                        });
+                      },
                       child: Text(translations['startActivity'] ??
                           'Start Activity')),
                   const SizedBox(height: 10),
