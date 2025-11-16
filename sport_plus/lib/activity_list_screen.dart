@@ -37,7 +37,8 @@ class _ActivitiesListScreenState extends State<ActivitiesListScreen> {
     });
 
     final connectivityResults = await Connectivity().checkConnectivity();
-    bool isOnline = connectivityResults.any((r) => r == ConnectivityResult.mobile || r == ConnectivityResult.wifi);
+    bool isOnline = connectivityResults
+        .any((r) => r == ConnectivityResult.mobile || r == ConnectivityResult.wifi);
 
     List<dynamic> activitiesData = [];
     final prefs = await SharedPreferences.getInstance();
@@ -46,9 +47,12 @@ class _ActivitiesListScreenState extends State<ActivitiesListScreen> {
 
     if (isOnline) {
       try {
-        activitiesData = await _authService.getUserActivities().timeout(const Duration(seconds: 3));
+        activitiesData =
+        await _authService.getUserActivities().timeout(const Duration(seconds: 3));
 
-        await prefs.setStringList('cached_activities', activitiesData.map((d) => jsonEncode(d)).toList());
+        await prefs.setStringList('cached_activities',
+            activitiesData.map((d) => jsonEncode(d)).toList());
+
         activitiesData.addAll(pendingActivities);
       } catch (e) {
         setState(() {
@@ -64,13 +68,18 @@ class _ActivitiesListScreenState extends State<ActivitiesListScreen> {
     }
 
     setState(() {
-      _activities = activitiesData.map((json) => Activity.fromJson(json is Map<String, dynamic> ? json : jsonDecode(json))).toList();
+      _activities = activitiesData
+          .map((json) =>
+          Activity.fromJson(json is Map<String, dynamic> ? json : jsonDecode(json)))
+          .toList();
       _isLoading = false;
     });
   }
 
   List<dynamic> _loadCachedActivities(SharedPreferences prefs) {
-    return (prefs.getStringList('cached_activities') ?? []).map((s) => jsonDecode(s)).toList();
+    return (prefs.getStringList('cached_activities') ?? [])
+        .map((s) => jsonDecode(s))
+        .toList();
   }
 
   List<dynamic> _loadPendingActivities(SharedPreferences prefs) {
@@ -115,7 +124,8 @@ class _ActivitiesListScreenState extends State<ActivitiesListScreen> {
     return '$day.$month.$year, $hour:$minute';
   }
 
-  Widget _buildFilterChip(String label, String value, String groupValue, Function(String) onSelected) {
+  Widget _buildFilterChip(String label, String value, String groupValue,
+      Function(String) onSelected) {
     final isSelected = value == groupValue;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 4.0),
@@ -136,7 +146,8 @@ class _ActivitiesListScreenState extends State<ActivitiesListScreen> {
     );
   }
 
-  Widget _buildActivityCard(Activity activity, Map<String, String> translations) {
+  Widget _buildActivityCard(
+      Activity activity, Map<String, String> translations) {
     final isPending = activity.activityId == 0;
 
     return Card(
@@ -147,17 +158,18 @@ class _ActivitiesListScreenState extends State<ActivitiesListScreen> {
       child: InkWell(
         onTap: () {
           if (isPending) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(translations['activityPendingUpload'] ?? 'Aktywność oczekuje na wysłanie. Szczegóły będą dostępne po synchronizacji.'),
-                backgroundColor: Colors.orange,
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => ActivityDetailsScreen(activity: activity),
               ),
             );
           } else {
             Navigator.push(
               context,
               MaterialPageRoute(
-                builder: (context) => ActivityDetailsScreen(activityId: activity.activityId),
+                builder: (context) =>
+                    ActivityDetailsScreen(activityId: activity.activityId),
               ),
             ).then((_) => _fetchActivities());
           }
@@ -237,7 +249,8 @@ class _ActivitiesListScreenState extends State<ActivitiesListScreen> {
           Icon(Icons.wifi_off, color: const Color(0xFF242424), size: 20),
           const SizedBox(width: 10),
           Text(
-            translations['offlinePendingOnly'] ?? 'Brak połączenia. Widoczne tylko oczekujące.',
+            translations['offlinePendingOnly'] ??
+                'Brak połączenia. Widoczne tylko oczekujące.',
             style: TextStyle(
               color: const Color(0xFF242424),
               fontWeight: FontWeight.bold,
@@ -262,7 +275,8 @@ class _ActivitiesListScreenState extends State<ActivitiesListScreen> {
           body: _isLoading
               ? const Center(
             child: CircularProgressIndicator(
-              valueColor: AlwaysStoppedAnimation<Color>(Color(0xFFffc300)),
+              valueColor:
+              AlwaysStoppedAnimation<Color>(Color(0xFFffc300)),
             ),
           )
               : Column(
@@ -282,19 +296,29 @@ class _ActivitiesListScreenState extends State<ActivitiesListScreen> {
               ),
               SingleChildScrollView(
                 scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 8.0),
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 12.0, vertical: 8.0),
                 child: Row(
                   children: [
-                    _buildFilterChip(translations['all'] ?? 'All', 'all', _filterType, (value) {
+                    _buildFilterChip(
+                        translations['all'] ?? 'All', 'all', _filterType,
+                            (value) {
+                          setState(() => _filterType = value);
+                        }),
+                    _buildFilterChip(translations['running'] ?? 'Running',
+                        'running', _filterType, (value) {
+                          setState(() => _filterType = value);
+                        }),
+                    _buildFilterChip(
+                        translations['cycling'] ?? 'Cycling',
+                        'cycling',
+                        _filterType, (value) {
                       setState(() => _filterType = value);
                     }),
-                    _buildFilterChip(translations['running'] ?? 'Running', 'running', _filterType, (value) {
-                      setState(() => _filterType = value);
-                    }),
-                    _buildFilterChip(translations['cycling'] ?? 'Cycling', 'cycling', _filterType, (value) {
-                      setState(() => _filterType = value);
-                    }),
-                    _buildFilterChip(translations['walking'] ?? 'Walking', 'walking', _filterType, (value) {
+                    _buildFilterChip(
+                        translations['walking'] ?? 'Walking',
+                        'walking',
+                        _filterType, (value) {
                       setState(() => _filterType = value);
                     }),
                   ],
@@ -313,15 +337,19 @@ class _ActivitiesListScreenState extends State<ActivitiesListScreen> {
               ),
               SingleChildScrollView(
                 scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 8.0),
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 12.0, vertical: 8.0),
                 child: Row(
                   children: [
-                    _buildFilterChip(translations['date'] ?? 'Date', 'date', _sortBy, (value) {
-                      setState(() => _sortBy = value);
-                    }),
-                    _buildFilterChip(translations['distance'] ?? 'Distance', 'distance', _sortBy, (value) {
-                      setState(() => _sortBy = value);
-                    }),
+                    _buildFilterChip(
+                        translations['date'] ?? 'Date', 'date', _sortBy,
+                            (value) {
+                          setState(() => _sortBy = value);
+                        }),
+                    _buildFilterChip(translations['distance'] ?? 'Distance',
+                        'distance', _sortBy, (value) {
+                          setState(() => _sortBy = value);
+                        }),
                   ],
                 ),
               ),
@@ -334,10 +362,15 @@ class _ActivitiesListScreenState extends State<ActivitiesListScreen> {
                       ? ListView(
                     physics: const AlwaysScrollableScrollPhysics(),
                     children: [
-                      SizedBox(height: MediaQuery.of(context).size.height * 0.2),
+                      SizedBox(
+                          height: MediaQuery.of(context)
+                              .size
+                              .height *
+                              0.2),
                       Center(
                         child: Text(
-                          translations['noActivitiesFound'] ?? 'Nie znaleziono aktywności',
+                          translations['noActivitiesFound'] ??
+                              'Nie znaleziono aktywności',
                           style: TextStyle(
                             color: Colors.white.withOpacity(0.7),
                             fontSize: 18,
@@ -350,7 +383,8 @@ class _ActivitiesListScreenState extends State<ActivitiesListScreen> {
                     itemCount: filteredActivities.length,
                     itemBuilder: (context, index) {
                       final activity = filteredActivities[index];
-                      return _buildActivityCard(activity, translations);
+                      return _buildActivityCard(
+                          activity, translations);
                     },
                   ),
                 ),

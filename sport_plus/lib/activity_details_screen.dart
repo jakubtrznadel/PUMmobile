@@ -13,9 +13,14 @@ import '../translations.dart';
 import 'custom_app_bar.dart';
 
 class ActivityDetailsScreen extends StatefulWidget {
-  final int activityId;
+  final int? activityId;
+  final Activity? activity;
 
-  const ActivityDetailsScreen({super.key, required this.activityId});
+  const ActivityDetailsScreen({
+    super.key,
+    this.activityId,
+    this.activity,
+  }) : assert(activityId != null || activity != null);
 
   @override
   _ActivityDetailsScreenState createState() => _ActivityDetailsScreenState();
@@ -32,13 +37,25 @@ class _ActivityDetailsScreenState extends State<ActivityDetailsScreen> {
   @override
   void initState() {
     super.initState();
-    _fetchActivity();
+    if (widget.activity != null) {
+      _loadActivityFromWidget(widget.activity!);
+    } else {
+      _fetchActivity();
+    }
   }
 
   @override
   void dispose() {
     _mapController.dispose();
     super.dispose();
+  }
+
+  void _loadActivityFromWidget(Activity activity) {
+    setState(() {
+      _activity = activity;
+      _isLoading = false;
+    });
+    _parseGpsTrack(activity.gpsTrack);
   }
 
   void _parseGpsTrack(String? gpsTrack) {
@@ -56,11 +73,12 @@ class _ActivityDetailsScreenState extends State<ActivityDetailsScreen> {
   }
 
   Future<void> _fetchActivity() async {
+    if (widget.activityId == null) return;
     setState(() {
       _isLoading = true;
     });
     try {
-      final activityData = await _authService.getActivity(widget.activityId);
+      final activityData = await _authService.getActivity(widget.activityId!);
       final activity = Activity.fromJson(activityData);
       setState(() {
         _activity = activity;
@@ -80,7 +98,7 @@ class _ActivityDetailsScreenState extends State<ActivityDetailsScreen> {
   }
 
   Future<void> _handleExportGpx() async {
-    if (_isExporting) return;
+    if (_isExporting || _activity == null || _activity!.activityId == 0) return;
 
     setState(() {
       _isExporting = true;
@@ -91,10 +109,10 @@ class _ActivityDetailsScreenState extends State<ActivityDetailsScreen> {
 
     try {
       final Uint8List gpxBytes =
-      await _authService.exportActivityToGpx(widget.activityId);
+      await _authService.exportActivityToGpx(_activity!.activityId);
 
       String fileName =
-          'activity_${_activity?.name.replaceAll(' ', '_') ?? widget.activityId}.gpx';
+          'activity_${_activity?.name.replaceAll(' ', '_') ?? _activity!.activityId}.gpx';
 
       final String? path = await FlutterFileDialog.saveFile(
         params: SaveFileDialogParams(
@@ -137,12 +155,14 @@ class _ActivityDetailsScreenState extends State<ActivityDetailsScreen> {
     }
   }
 
-  String _formatDuration(double durationInHours, Map<String, String> translations) {
-    if (durationInHours < 0) return "0 ${translations['min']} 0 ${translations['s']}";
-    final totalSeconds = (durationInHours * 3600).round();
-    final hours = (totalSeconds / 3600).floor();
-    final minutes = ((totalSeconds % 3600) / 60).floor();
-    final seconds = totalSeconds % 60;
+  String _formatDuration(
+      double totalSeconds, Map<String, String> translations) {
+    if (totalSeconds < 0)
+      return "0 ${translations['min']} 0 ${translations['s']}";
+    final totalSecondsRounded = totalSeconds.round();
+    final hours = (totalSecondsRounded / 3600).floor();
+    final minutes = ((totalSecondsRounded % 3600) / 60).floor();
+    final seconds = totalSecondsRounded % 60;
 
     if (hours > 0) {
       return '$hours ${translations['h']} $minutes ${translations['min']}';
@@ -240,13 +260,15 @@ class _ActivityDetailsScreenState extends State<ActivityDetailsScreen> {
           body: _isLoading
               ? const Center(
             child: CircularProgressIndicator(
-              valueColor: AlwaysStoppedAnimation<Color>(Color(0xFFffc3D)),
+              valueColor:
+              AlwaysStoppedAnimation<Color>(Color(0xFFffc3D)),
             ),
           )
               : _activity == null
               ? Center(
             child: Text(
-              translations['activityNotFound'] ?? 'Activity not found',
+              translations['activityNotFound'] ??
+                  'Activity not found',
               style: GoogleFonts.bebasNeue(
                 fontSize: 24,
                 color: const Color(0xFFffc3D0),
@@ -278,31 +300,34 @@ class _ActivityDetailsScreenState extends State<ActivityDetailsScreen> {
                   children: [
                     _buildStatCard(
                       icon: Icons.directions_run,
-                      value: '${_activity!.distance.toStringAsFixed(2)} ${translations['km']}',
+                      value:
+                      '${_activity!.distance.toStringAsFixed(2)} ${translations['km']}',
                       label: 'distance',
                       translations: translations,
                     ),
                     _buildStatCard(
                       icon: Icons.timer_outlined,
-                      value: _formatDuration(_activity!.duration, translations),
+                      value: _formatDuration(
+                          _activity!.duration, translations),
                       label: 'duration',
                       translations: translations,
                     ),
                     _buildStatCard(
                       icon: Icons.speed,
-                      value: '${_formatPace(_activity!.pace)} ${translations['min/km']}',
+                      value:
+                      '${_formatPace(_activity!.pace)} ${translations['min/km']}',
                       label: 'pace',
                       translations: translations,
                     ),
                     _buildStatCard(
                       icon: Icons.shutter_speed,
-                      value: '${_activity!.averageSpeed?.toStringAsFixed(2) ?? '-'} ${translations['km/h']}',
+                      value:
+                      '${_activity!.averageSpeed?.toStringAsFixed(2) ?? '-'} ${translations['km/h']}',
                       label: 'averageSpeed',
                       translations: translations,
                     ),
                   ],
                 ),
-
                 if (_activity!.note != null &&
                     _activity!.note!.isNotEmpty) ...[
                   const SizedBox(height: 16),
@@ -331,9 +356,7 @@ class _ActivityDetailsScreenState extends State<ActivityDetailsScreen> {
                     ),
                   ),
                 ],
-
                 const SizedBox(height: 16),
-
                 if (_routePoints.isNotEmpty)
                   SizedBox(
                     height: 220,
@@ -347,16 +370,21 @@ class _ActivityDetailsScreenState extends State<ActivityDetailsScreen> {
                           onMapReady: () {
                             WidgetsBinding.instance
                                 .addPostFrameCallback((_) {
-                              if (mounted && _routePoints.isNotEmpty) {
-                                final bounds = _calculateBounds(_routePoints);
+                              if (mounted &&
+                                  _routePoints.isNotEmpty) {
+                                final bounds =
+                                _calculateBounds(_routePoints);
 
-                                if (bounds.southWest == bounds.northEast) {
-                                  _mapController.move(bounds.center, 17.0);
+                                if (bounds.southWest ==
+                                    bounds.northEast) {
+                                  _mapController.move(
+                                      bounds.center, 17.0);
                                 } else {
                                   _mapController.fitCamera(
                                     CameraFit.bounds(
                                       bounds: bounds,
-                                      padding: const EdgeInsets.all(30.0),
+                                      padding: const EdgeInsets.all(
+                                          30.0),
                                     ),
                                   );
                                 }
@@ -382,7 +410,6 @@ class _ActivityDetailsScreenState extends State<ActivityDetailsScreen> {
                       ),
                     ),
                   ),
-
                 if (_activity!.photoUrl != null &&
                     _activity!.photoUrl!.isNotEmpty) ...[
                   const SizedBox(height: 16),
@@ -399,7 +426,8 @@ class _ActivityDetailsScreenState extends State<ActivityDetailsScreen> {
                           }));
                     },
                     child: Hero(
-                      tag: 'activityImage${_activity!.activityId}',
+                      tag:
+                      'activityImage${_activity!.activityId}',
                       child: ClipRRect(
                         borderRadius: BorderRadius.circular(12),
                         child: CachedNetworkImage(
@@ -410,7 +438,8 @@ class _ActivityDetailsScreenState extends State<ActivityDetailsScreen> {
                           fit: BoxFit.cover,
                           placeholder: (context, url) =>
                           const Center(
-                              child: CircularProgressIndicator()),
+                              child:
+                              CircularProgressIndicator()),
                           errorWidget: (context, url, error) =>
                           const Icon(Icons.error),
                         ),
@@ -418,18 +447,21 @@ class _ActivityDetailsScreenState extends State<ActivityDetailsScreen> {
                     ),
                   ),
                 ],
-
                 const SizedBox(height: 24),
-
                 ElevatedButton.icon(
-                  onPressed: _isExporting ? null : _handleExportGpx,
+                  onPressed: _isExporting ||
+                      _activity?.activityId == 0 ||
+                      _activity?.activityId == null
+                      ? null
+                      : _handleExportGpx,
                   icon: _isExporting
                       ? Container(
                     width: 20,
                     height: 20,
                     child: const CircularProgressIndicator(
                       strokeWidth: 2,
-                      valueColor: AlwaysStoppedAnimation<Color>(
+                      valueColor:
+                      AlwaysStoppedAnimation<Color>(
                           Color(0xFF242424)),
                     ),
                   )
@@ -437,7 +469,8 @@ class _ActivityDetailsScreenState extends State<ActivityDetailsScreen> {
                       color: Color(0xFF242424)),
                   label: Text(
                     _isExporting
-                        ? (translations['exporting'] ?? 'Eksportowanie...')
+                        ? (translations['exporting'] ??
+                        'Eksportowanie...')
                         : (translations['exportToGpx'] ??
                         'Eksportuj do GPX'),
                     style: GoogleFonts.bebasNeue(
@@ -447,8 +480,13 @@ class _ActivityDetailsScreenState extends State<ActivityDetailsScreen> {
                     ),
                   ),
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFFffc300),
-                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    backgroundColor: _isExporting ||
+                        _activity?.activityId == 0 ||
+                        _activity?.activityId == null
+                        ? Colors.grey
+                        : const Color(0xFFffc300),
+                    padding:
+                    const EdgeInsets.symmetric(vertical: 12),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(12),
                     ),

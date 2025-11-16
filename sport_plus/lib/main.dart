@@ -16,6 +16,8 @@ import 'activity_tracking_screen.dart';
 import 'activity_list_screen.dart';
 import 'stats_screen.dart';
 import 'login_screen.dart';
+import 'ranking_screen.dart';
+import 'animations/splash_animation.dart';
 
 class MyHttpOverrides extends HttpOverrides {
   @override
@@ -50,17 +52,9 @@ class SplashScreen extends StatefulWidget {
 }
 
 class _SplashScreenState extends State<SplashScreen> {
-  @override
-  void initState() {
-    super.initState();
-    _checkLoginStatus();
-  }
-
   Future<void> _checkLoginStatus() async {
     final prefs = await SharedPreferences.getInstance();
     final token = prefs.getString('jwt_token');
-
-    await Future.delayed(const Duration(milliseconds: 2000));
 
     if (mounted) {
       Navigator.pushReplacement(
@@ -76,13 +70,8 @@ class _SplashScreenState extends State<SplashScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFF1a1a1a),
-      body: Center(
-        child: CircularProgressIndicator(
-          valueColor: AlwaysStoppedAnimation<Color>(const Color(0xFFffc300)),
-        ),
-      ),
+    return SplashAnimation(
+      onAnimationComplete: _checkLoginStatus,
     );
   }
 }
@@ -299,8 +288,8 @@ class _MainScreenState extends State<MainScreen> {
                           MaterialPageRoute(
                               builder: (context) =>
                                   ActivityTrackingScreen())),
-                      child: Text(
-                          translations['startActivity'] ?? 'Start Activity')),
+                      child: Text(translations['startActivity'] ??
+                          'Start Activity')),
                   const SizedBox(height: 10),
                   ElevatedButton(
                     style: _customButtonStyle(),
@@ -313,8 +302,8 @@ class _MainScreenState extends State<MainScreen> {
                         _fetchProfileAndSyncActivities();
                       });
                     },
-                    child: Text(
-                        translations['activities'] ?? 'Activities'),
+                    child:
+                    Text(translations['activities'] ?? 'Activities'),
                   ),
                   const SizedBox(height: 10),
                   ElevatedButton(
@@ -323,7 +312,16 @@ class _MainScreenState extends State<MainScreen> {
                           context,
                           MaterialPageRoute(
                               builder: (context) => StatsScreen())),
-                      child: Text(translations['stats'] ?? 'Statistics')),
+                      child:
+                      Text(translations['stats'] ?? 'Statistics')),
+                  const SizedBox(height: 10),
+                  ElevatedButton(
+                      style: _customButtonStyle(),
+                      onPressed: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                              builder: (context) => RankingScreen())),
+                      child: Text(translations['ranking'] ?? 'Ranking')),
                   const SizedBox(height: 10),
                   ElevatedButton(
                     style: _customButtonStyle(),

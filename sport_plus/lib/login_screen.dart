@@ -6,6 +6,7 @@ import 'translations.dart';
 import 'language_state.dart';
 import 'services/auth_service.dart';
 import 'main.dart';
+import 'forgot_password_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   @override
@@ -72,7 +73,8 @@ class _LoginScreenState extends State<LoginScreen> {
             return const Color(0xFFffc300);
           }),
           foregroundColor: WidgetStateProperty.all(const Color(0xFF242424)),
-          padding: WidgetStateProperty.all(const EdgeInsets.symmetric(horizontal: 20.0, vertical: 10.0)),
+          padding: WidgetStateProperty.all(
+              const EdgeInsets.symmetric(horizontal: 20.0, vertical: 10.0)),
           textStyle: WidgetStateProperty.all(
             GoogleFonts.bebasNeue(fontSize: 24.0, fontWeight: FontWeight.w600),
           ),
@@ -145,7 +147,8 @@ class _LoginScreenState extends State<LoginScreen> {
                 const SizedBox(height: 20),
                 _isLoading
                     ? const CircularProgressIndicator(
-                  valueColor: AlwaysStoppedAnimation<Color>(Color(0xFFffc300)),
+                  valueColor:
+                  AlwaysStoppedAnimation<Color>(Color(0xFFffc300)),
                 )
                     : ElevatedButton(
                   style: customButtonStyle,
@@ -156,11 +159,25 @@ class _LoginScreenState extends State<LoginScreen> {
                   onPressed: () {
                     Navigator.push(
                       context,
-                      MaterialPageRoute(builder: (context) => RegistrationScreen()),
+                      MaterialPageRoute(
+                          builder: (context) => RegistrationScreen()),
                     );
                   },
                   child: Text(
                     translations['noAccount']!,
+                    style: const TextStyle(color: Color(0xFFffc300)),
+                  ),
+                ),
+                TextButton(
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                          builder: (context) => ForgotPasswordScreen()),
+                    );
+                  },
+                  child: Text(
+                    translations['forgotPassword'] ?? 'Zapomniałeś hasła?',
                     style: const TextStyle(color: Color(0xFFffc300)),
                   ),
                 ),

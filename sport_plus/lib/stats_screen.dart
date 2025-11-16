@@ -46,7 +46,8 @@ class _StatsScreenState extends State<StatsScreen> {
 
     if (isOnline) {
       try {
-        statsData = await _authService.getUserStats().timeout(const Duration(seconds: 3));
+        statsData =
+        await _authService.getUserStats().timeout(const Duration(seconds: 3));
         await prefs.setString('cached_stats', jsonEncode(statsData));
       } catch (e) {
         setState(() {
@@ -72,6 +73,41 @@ class _StatsScreenState extends State<StatsScreen> {
     }
 
     return UserStats.fromJson(statsData);
+  }
+
+  String _formatDuration(double totalSeconds) {
+    if (totalSeconds.isNaN || totalSeconds.isInfinite || totalSeconds < 0) {
+      return "00:00";
+    }
+    int seconds = totalSeconds.floor() % 60;
+    int minutes = (totalSeconds.floor() ~/ 60) % 60;
+    int hours = (totalSeconds.floor() ~/ 3600);
+
+    String minutesStr = minutes.toString().padLeft(2, '0');
+    String secondsStr = seconds.toString().padLeft(2, '0');
+
+    if (hours > 0) {
+      return "${hours.toString()}:$minutesStr:$secondsStr";
+    } else {
+      return "$minutesStr:$secondsStr";
+    }
+  }
+
+  String _formatPace(double? paceInMinutes) {
+    if (paceInMinutes == null ||
+        paceInMinutes.isNaN ||
+        paceInMinutes.isInfinite ||
+        paceInMinutes <= 0) {
+      return "--:--";
+    }
+    int minutes = paceInMinutes.floor();
+    int seconds = ((paceInMinutes - minutes) * 60).round();
+
+    if (seconds == 60) {
+      return "${(minutes + 1).toString().padLeft(2, '0')}:00";
+    }
+
+    return "${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}";
   }
 
   Widget _buildStatCard({
@@ -132,7 +168,8 @@ class _StatsScreenState extends State<StatsScreen> {
           Icon(Icons.wifi_off, color: const Color(0xFF242424), size: 20),
           const SizedBox(width: 10),
           Text(
-            translations['offlineCachedData'] ?? 'Brak połączenia. Widoczne dane z pamięci.',
+            translations['offlineCachedData'] ??
+                'Brak połączenia. Widoczne dane z pamięci.',
             style: TextStyle(
               color: const Color(0xFF242424),
               fontWeight: FontWeight.bold,
@@ -167,16 +204,21 @@ class _StatsScreenState extends State<StatsScreen> {
                       if (snapshot.connectionState == ConnectionState.waiting) {
                         return const Center(
                           child: CircularProgressIndicator(
-                            valueColor: AlwaysStoppedAnimation<Color>(Color(0xFFffc300)),
+                            valueColor: AlwaysStoppedAnimation<Color>(
+                                Color(0xFFffc300)),
                           ),
                         );
                       }
 
-                      if (snapshot.hasError || !snapshot.hasData || snapshot.data == null) {
+                      if (snapshot.hasError ||
+                          !snapshot.hasData ||
+                          snapshot.data == null) {
                         return ListView(
                           physics: const AlwaysScrollableScrollPhysics(),
                           children: [
-                            SizedBox(height: MediaQuery.of(context).size.height * 0.3),
+                            SizedBox(
+                                height:
+                                MediaQuery.of(context).size.height * 0.3),
                             Center(
                               child: Text(
                                 translations['noStats'] ?? 'Brak statystyk',
@@ -217,17 +259,42 @@ class _StatsScreenState extends State<StatsScreen> {
                                 _buildStatCard(
                                   icon: Icons.track_changes,
                                   value: stats.totalWorkouts.toString(),
-                                  label: translations['totalWorkouts'] ?? 'Liczba treningów',
+                                  label: translations['totalWorkouts'] ??
+                                      'Liczba treningów',
                                 ),
                                 _buildStatCard(
                                   icon: Icons.map,
-                                  value: '${stats.totalDistance.toStringAsFixed(2)} ${translations["km"] ?? "km"}',
-                                  label: translations['totalDistance'] ?? 'Całkowity dystans',
+                                  value:
+                                  '${stats.totalDistance.toStringAsFixed(2)} ${translations["km"] ?? "km"}',
+                                  label: translations['totalDistance'] ??
+                                      'Całkowity dystans',
+                                ),
+                                _buildStatCard(
+                                  icon: Icons.timer,
+                                  value: _formatDuration(stats.totalDuration),
+                                  label: translations['totalDuration'] ??
+                                      'Całkowity czas',
                                 ),
                                 _buildStatCard(
                                   icon: Icons.speed,
-                                  value: '${stats.averageSpeed.toStringAsFixed(2)} ${translations["km/h"] ?? "km/h"}',
-                                  label: translations['averageSpeed'] ?? 'Średnia prędkość',
+                                  value:
+                                  '${stats.averageSpeed.toStringAsFixed(2)} ${translations["km/h"] ?? "km/h"}',
+                                  label: translations['averageSpeed'] ??
+                                      'Średnia prędkość',
+                                ),
+                                _buildStatCard(
+                                  icon: Icons.rocket_launch,
+                                  value:
+                                  '${_formatPace(stats.fastestPace)} ${translations["min/km"] ?? "min/km"}',
+                                  label: translations['fastestPace'] ??
+                                      'Najszybsze tempo',
+                                ),
+                                _buildStatCard(
+                                  icon: Icons.star,
+                                  value:
+                                  '${stats.maxDistance.toStringAsFixed(2)} ${translations["km"] ?? "km"}',
+                                  label: translations['maxDistance'] ??
+                                      'Najdłuższy dystans',
                                 ),
                               ],
                             ),

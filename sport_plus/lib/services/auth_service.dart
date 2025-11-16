@@ -308,4 +308,85 @@ class AuthService {
       throw Exception(globalIsPolish.value ? 'Błąd połączenia' : 'Connection error');
     }
   }
+
+  Future<List<dynamic>> getRanking(String sortBy) async {
+    final client = _getClient();
+    try {
+      final response = await client.get(
+        Uri.parse('$baseUrl/api/activities/ranking?sortBy=$sortBy'),
+      ).timeout(const Duration(seconds: 5));
+
+      if (response.statusCode == 200) {
+        return jsonDecode(response.body) as List<dynamic>;
+      } else {
+        throw Exception(globalIsPolish.value
+            ? 'Błąd pobierania rankingu'
+            : 'Failed to load ranking');
+      }
+    } catch (e) {
+      throw Exception(globalIsPolish.value ? 'Błąd połączenia' : 'Connection error');
+    }
+  }
+
+  Future<Map<String, dynamic>> forgotPassword(String email) async {
+    final client = _getClient();
+    try {
+      final response = await client.post(
+        Uri.parse('$baseUrl/api/auth/forgot-password'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'email': email}),
+      );
+
+      if (response.statusCode == 200) {
+        return {
+          'success': true,
+          'message': globalIsPolish.value ? 'Link wysłany.' : 'Link sent.'
+        };
+      } else {
+        final data = jsonDecode(response.body);
+        return {
+          'success': false,
+          'message': data['message'] ?? (globalIsPolish.value ? 'Błąd' : 'Error')
+        };
+      }
+    } catch (e) {
+      return {
+        'success': false,
+        'message':
+        globalIsPolish.value ? 'Błąd połączenia' : 'Connection error'
+      };
+    }
+  }
+
+  Future<Map<String, dynamic>> resetPassword(
+      String token, String newPassword) async {
+    final client = _getClient();
+    try {
+      final response = await client.post(
+        Uri.parse('$baseUrl/api/auth/reset-password'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'token': token, 'newPassword': newPassword}),
+      );
+
+      if (response.statusCode == 200) {
+        return {
+          'success': true,
+          'message':
+          globalIsPolish.value ? 'Hasło zresetowane.' : 'Password reset.'
+        };
+      } else {
+        final data = jsonDecode(response.body);
+        return {
+          'success': false,
+          'message': data['message'] ?? (globalIsPolish.value ? 'Błąd' : 'Error')
+        };
+      }
+    } catch (e) {
+      return {
+        'success': false,
+        'message':
+        globalIsPolish.value ? 'Błąd połączenia' : 'Connection error'
+      };
+    }
+  }
 }

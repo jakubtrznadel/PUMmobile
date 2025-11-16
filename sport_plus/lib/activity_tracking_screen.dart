@@ -14,6 +14,7 @@ import '../services/auth_service.dart';
 import '../language_state.dart';
 import '../translations.dart';
 import 'custom_app_bar.dart';
+import 'activity_details_screen.dart';
 
 extension StringExtension on String {
   String capitalize() {
@@ -204,18 +205,20 @@ class _ActivityTrackingScreenState extends State<ActivityTrackingScreen> {
     final translations =
     globalIsPolish.value ? Translations.pl : Translations.en;
     if (_startTime == null || _isSaving) return;
+
     setState(() {
       _isSaving = true;
     });
+
     Navigator.of(context).pop();
 
     final durationInSeconds = DateTime.now().difference(_startTime!).inSeconds;
-    final durationInHours = durationInSeconds / 3600.0;
     double? averageSpeed;
     double? pace;
     double distanceInKm = _distance / 1000.0;
 
-    if (distanceInKm > 0 && durationInHours > 0) {
+    if (distanceInKm > 0 && durationInSeconds > 0) {
+      final durationInHours = durationInSeconds / 3600.0;
       averageSpeed = distanceInKm / durationInHours;
       pace = (durationInSeconds / 60.0) / distanceInKm;
     }
@@ -227,7 +230,7 @@ class _ActivityTrackingScreenState extends State<ActivityTrackingScreen> {
           ? _activityName
           : 'Aktywność z ${DateTime.now().toIso8601String()}',
       type: _activityType,
-      duration: double.parse(durationInHours.toStringAsFixed(2)),
+      duration: durationInSeconds.toDouble(),
       distance: double.parse(distanceInKm.toStringAsFixed(2)),
       pace: pace,
       averageSpeed: averageSpeed,
@@ -248,12 +251,24 @@ class _ActivityTrackingScreenState extends State<ActivityTrackingScreen> {
         if (_photo != null && newActivityId != null) {
           await _authService.uploadActivityPhoto(newActivityId, _photo!);
         }
+
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(SnackBar(
             content: Text(translations['activitySavedOnline'] ??
                 'Aktywność zapisana online!'),
             backgroundColor: Colors.green,
           ));
+
+          await Future.delayed(const Duration(milliseconds: 1500));
+
+          if (mounted && newActivityId != null) {
+            Navigator.of(context).pushReplacement(
+              MaterialPageRoute(
+                builder: (context) =>
+                    ActivityDetailsScreen(activityId: newActivityId),
+              ),
+            );
+          }
         }
       } catch (e) {
         await _saveActivityLocally(activity);
@@ -263,6 +278,16 @@ class _ActivityTrackingScreenState extends State<ActivityTrackingScreen> {
                 'Błąd serwera. Zapisano lokalnie.'),
             backgroundColor: Colors.orange,
           ));
+
+          await Future.delayed(const Duration(milliseconds: 1500));
+
+          if (mounted) {
+            Navigator.of(context).pushReplacement(
+              MaterialPageRoute(
+                builder: (context) => ActivityDetailsScreen(activity: activity),
+              ),
+            );
+          }
         }
       }
     } else {
@@ -273,16 +298,18 @@ class _ActivityTrackingScreenState extends State<ActivityTrackingScreen> {
               'Offline. Zapisano lokalnie.'),
           backgroundColor: Colors.orange,
         ));
+
+        await Future.delayed(const Duration(milliseconds: 1500));
+
+        if (mounted) {
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(
+              builder: (context) => ActivityDetailsScreen(activity: activity),
+            ),
+          );
+        }
       }
     }
-
-    setState(() {
-      _isSaving = false;
-      _activityName = '';
-      _note = '';
-      _photo = null;
-      _activityType = 'running';
-    });
   }
 
   Future<void> _saveActivityLocally(Activity activity) async {
@@ -292,8 +319,10 @@ class _ActivityTrackingScreenState extends State<ActivityTrackingScreen> {
       'activity': activity.toJson(),
       'photoPath': _photo?.path,
     };
-    if (!localActivitiesJSON.any((json) => json == jsonEncode(entry))) {
-      localActivitiesJSON.add(jsonEncode(entry));
+    final entryString = jsonEncode(entry);
+
+    if (!localActivitiesJSON.contains(entryString)) {
+      localActivitiesJSON.add(entryString);
       await prefs.setStringList('local_activities', localActivitiesJSON);
     }
   }
@@ -319,7 +348,8 @@ class _ActivityTrackingScreenState extends State<ActivityTrackingScreen> {
                       onChanged: (value) => _activityName = value,
                       style: const TextStyle(color: Color(0xFFffc300)),
                       decoration: InputDecoration(
-                        labelText: translations['activityName'] ?? 'Nazwa aktywności',
+                        labelText:
+                        translations['activityName'] ?? 'Nazwa aktywności',
                         labelStyle: const TextStyle(color: Color(0xFFffc300)),
                         enabledBorder: const OutlineInputBorder(
                             borderSide: BorderSide(color: Color(0xFFffc300))),
@@ -338,7 +368,8 @@ class _ActivityTrackingScreenState extends State<ActivityTrackingScreen> {
                           .map((String value) {
                         return DropdownMenuItem<String>(
                           value: value,
-                          child: Text(translations[value] ?? value.capitalize()),
+                          child:
+                          Text(translations[value] ?? value.capitalize()),
                         );
                       }).toList(),
                       onChanged: (newValue) {
@@ -366,7 +397,8 @@ class _ActivityTrackingScreenState extends State<ActivityTrackingScreen> {
                       onPressed: () => _pickPhoto(dialogSetState),
                       style: ElevatedButton.styleFrom(
                           backgroundColor: const Color(0xFFffc300)),
-                      child: Text(translations['pickPhoto'] ?? 'Wybierz zdjęcie',
+                      child: Text(
+                          translations['pickPhoto'] ?? 'Wybierz zdjęcie',
                           style: GoogleFonts.bebasNeue(
                               color: const Color(0xFF242424))),
                     ),
@@ -489,8 +521,8 @@ class _ActivityTrackingScreenState extends State<ActivityTrackingScreen> {
               Align(
                 alignment: Alignment.bottomCenter,
                 child: Container(
-                  padding:
-                  const EdgeInsets.symmetric(horizontal: 16.0, vertical: 20.0),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 16.0, vertical: 20.0),
                   decoration: const BoxDecoration(
                     color: Color(0xFF242424),
                     borderRadius: BorderRadius.only(
@@ -567,6 +599,31 @@ class _ActivityTrackingScreenState extends State<ActivityTrackingScreen> {
                   ),
                 ),
               ),
+              if (_isSaving)
+                Container(
+                  color: Colors.black.withOpacity(0.75),
+                  child: Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const CircularProgressIndicator(
+                          valueColor:
+                          AlwaysStoppedAnimation<Color>(Color(0xFFffc300)),
+                        ),
+                        const SizedBox(height: 20),
+                        Text(
+                          translations['savingActivity'] ??
+                              'Zapisywanie aktywności...',
+                          style: GoogleFonts.bebasNeue(
+                            fontSize: 24,
+                            color: const Color(0xFFffc300),
+                            letterSpacing: 1,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
             ],
           ),
         );
