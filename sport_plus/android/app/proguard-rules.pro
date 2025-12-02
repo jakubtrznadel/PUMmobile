@@ -1,0 +1,5 @@
+-dontwarn okhttp3.**
+-dontwarn okio.**
+-dontwarn javax.annotation.**
+-keep class okhttp3.** { *; }
+-keep interface okhttp3.** { *; }

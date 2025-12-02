@@ -14,10 +14,19 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION"/>
 
     <application
-        android:label="sport_plus"
+        android:label="Sport +"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
         android:enableOnBackInvokedCallback="true">
+
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_icon"
+            android:resource="@drawable/ic_bg_service_small" />
+
+        <meta-data
+            android:name="com.dexterous.flutterlocalnotifications.default_icon"
+            android:resource="@drawable/ic_bg_service_small" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"

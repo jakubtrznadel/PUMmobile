@@ -7,7 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../language_state.dart';
 
 class AuthService {
-  static const String baseUrl = 'https://192.168.0.161:7114';
+  static const String baseUrl = 'https://www.sportplusproject.pl.hostingasp.pl';
 
   IOClient? _client;
 
